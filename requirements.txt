@@ -1,0 +1,5 @@
+Plaintext
+fredapi
+pandas
+google-genai
+requests
