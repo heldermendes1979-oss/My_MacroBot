@@ -1,4 +1,3 @@
-Plaintext
 fredapi
 pandas
 google-genai
