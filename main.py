@@ -106,11 +106,11 @@ DIRETRIZES:
 """
 
 def analisar_macro_com_gemini(dados_fred_text: str) -> str:
-    print("\nGerando análise com Gemini (gemini-2.0-flash)...")
+    print("\nGerando análise com Gemini (gemini-3.6-flash)...")
     client = genai.Client(api_key=GEMINI_API_KEY)
     
     response = client.models.generate_content(
-        model='gemini-2.0-flash',
+        model='gemini-3.6-flash',
         contents=f"Aqui estão os dados atualizados do FRED para sua análise:\n\n{dados_fred_text}",
         config=types.GenerateContentConfig(
             system_instruction=SYSTEM_INSTRUCTION,
