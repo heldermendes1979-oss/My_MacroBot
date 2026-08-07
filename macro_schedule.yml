@@ -1,11 +1,10 @@
-YAML
 name: Executar Agente Macro Automatizado
 
 on:
   schedule:
     # Roda toda Segunda-Feira às 11:00 UTC (08:00 AM no horário de Brasília)
     - cron: '0 11 * * 1'
-  workflow_dispatch: # Permite disparar o relatório manualmente pelo botão no GitHub se desejar
+  workflow_dispatch: # Permite disparar o relatório manualmente pelo botão no GitHub
 
 jobs:
   run-macro-agent:
@@ -13,10 +12,10 @@ jobs:
 
     steps:
       - name: Baixar Código do Repositório
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4  # Atualizado de v3 para v4
 
       - name: Configurar ambiente Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5  # Atualizado de v4 para v5
         with:
           python-version: '3.10'
 
