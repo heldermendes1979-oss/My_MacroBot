@@ -1,13 +1,16 @@
 import os
+import sys
+import time
 import requests
 import pandas as pd
 from datetime import datetime, timedelta
 from fredapi import Fred
 from google import genai
 from google.genai import types
+from google.genai.errors import ServerError
 
 # =====================================================================
-# 1. LEITURA DE VARIÁVEIS DE AMBIENTE SEGURAS (SECRETS DA NUVEM)
+# 1. LEITURA DE VARIÁVEIS DE AMBIENTE (SECRETS)
 # =====================================================================
 FRED_API_KEY = os.environ.get("FRED_API_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
@@ -18,7 +21,7 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 # 2. COLETA E PROCESSAMENTO DOS DADOS DO FRED
 # =====================================================================
 def fetch_macro_data(api_key: str, lookback_years: int = 2) -> pd.DataFrame:
-    fred = Fred(api_key=api_key)
+    fred = Fred(api_key=api_key.strip())
     start_date = (datetime.today() - timedelta(days=365 * lookback_years)).strftime('%Y-%m-%d')
     
     series_map = {
@@ -92,7 +95,7 @@ DADOS MACROECONÔMICOS CONSOLIDADOS (FRED) - {datetime.today().strftime('%Y-%m-%
     return payload
 
 # =====================================================================
-# 3. ANÁLISE COM O GEMINI
+# 3. ANÁLISE COM GEMINI COM RETRY E FALLBACK AUTOMÁTICO
 # =====================================================================
 SYSTEM_INSTRUCTION = """
 Você é um Analista MacroEstratégico Sênior focado em apoio à tomada de decisão de um investidor com perfil Arrojado.
@@ -106,24 +109,44 @@ DIRETRIZES:
 """
 
 def analisar_macro_com_gemini(dados_fred_text: str) -> str:
-    print("\nGerando análise com Gemini (gemini-3.6-flash)...")
-    client = genai.Client(api_key=GEMINI_API_KEY)
+    api_key_limpa = GEMINI_API_KEY.strip().replace('"', '').replace("'", "")
+    client = genai.Client(api_key=api_key_limpa)
     
-    response = client.models.generate_content(
-        model='gemini-3.6-flash',
-        contents=f"Aqui estão os dados atualizados do FRED para sua análise:\n\n{dados_fred_text}",
-        config=types.GenerateContentConfig(
-            system_instruction=SYSTEM_INSTRUCTION,
-            temperature=0.2
-        )
-    )
-    return response.text
+    # Modelos estáveis em ordem de prioridade para contingência
+    modelos_candidatos = ['gemini-3.6-flash', 'gemini-2.0-flash', 'gemini-1.5-flash']
+    
+    for modelo in modelos_candidatos:
+        for tentativa in range(1, 4):
+            try:
+                print(f"Gerando análise com {modelo} (Tentativa {tentativa}/3)...")
+                response = client.models.generate_content(
+                    model=modelo,
+                    contents=f"Aqui estão os dados atualizados do FRED para sua análise:\n\n{dados_fred_text}",
+                    config=types.GenerateContentConfig(
+                        system_instruction=SYSTEM_INSTRUCTION,
+                        temperature=0.2
+                    )
+                )
+                if response.text:
+                    return response.text
+            except ServerError as e:
+                print(f"⚠️ Servidor sobrecarregado (503) no modelo {modelo}: {e.message}")
+                if tentativa < 3:
+                    tempo_espera = tentativa * 10
+                    print(f"Aguardando {tempo_espera}s antes de tentar novamente...")
+                    time.sleep(tempo_espera)
+            except Exception as e:
+                print(f"⚠️ Erro inesperado ao consultar {modelo}: {e}")
+                break
+                
+    print("❌ Todos os modelos e tentativas esgotaram com erro.")
+    sys.exit(1)
 
 # =====================================================================
 # 4. DISPARO PARA O TELEGRAM
 # =====================================================================
 def enviar_relatorio_telegram_completo(dados_fred: str, analise_ia: str, token: str, chat_id: str):
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    url = f"https://api.telegram.org/bot{token.strip()}/sendMessage"
     
     relatorio_completo = (
         f"{dados_fred}\n\n"
@@ -136,11 +159,11 @@ def enviar_relatorio_telegram_completo(dados_fred: str, analise_ia: str, token: 
     MAX_CHAR = 3800
     blocos = [relatorio_completo[i:i + MAX_CHAR] for i in range(0, len(relatorio_completo), MAX_CHAR)]
     
-    print(f"Enviando relatório completo ({len(blocos)} bloco(s)) para o Telegram...")
+    print(f"\nEnviando relatório completo ({len(blocos)} bloco(s)) para o Telegram...")
     
     for idx, bloco in enumerate(blocos):
         payload = {
-            "chat_id": chat_id,
+            "chat_id": str(chat_id).strip(),
             "text": bloco
         }
         
@@ -150,7 +173,8 @@ def enviar_relatorio_telegram_completo(dados_fred: str, analise_ia: str, token: 
         if response.status_code == 200 and res_data.get("ok"):
             print(f"  [✓] Bloco {idx + 1}/{len(blocos)} enviado com sucesso!")
         else:
-            print(f"  [✗] Erro no bloco {idx + 1}: {res_data.get('description')}")
+            print(f"❌ Erro ao enviar para o Telegram: {res_data.get('description')}")
+            sys.exit(1)
 
 # =====================================================================
 # 5. EXECUÇÃO
