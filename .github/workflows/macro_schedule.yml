@@ -2,9 +2,9 @@ name: Executar Agente Macro Automatizado
 
 on:
   schedule:
-    # Roda toda Segunda-Feira às 12:00 UTC (08:00 AM no horário de Brasília)
-    - cron: '0 12 * * 1'
-  workflow_dispatch: # Permite disparar o relatório manualmente pelo botão no GitHub se desejar
+    # Roda Domingo às 12:00 UTC (09:00 AM no horário de Brasília)
+    - cron: '0 12 * * 0'
+  workflow_dispatch: # Permite acionamento manual se necessário
 
 jobs:
   run-macro-agent:
@@ -12,10 +12,10 @@ jobs:
 
     steps:
       - name: Clonar o repositório
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Configurar o Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
