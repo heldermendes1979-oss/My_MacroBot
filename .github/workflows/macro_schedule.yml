@@ -2,9 +2,9 @@ name: Executar Agente Macro Automatizado
 
 on:
   schedule:
-    # Roda Domingo às 12:00 UTC (09:00 AM no horário de Brasília)
+    # Roda domingo às 12:00 UTC (09:00 no horário de Brasília)
     - cron: '0 12 * * 0'
-  workflow_dispatch: # Permite acionamento manual se necessário
+  workflow_dispatch:
 
 jobs:
   run-macro-agent:
@@ -24,11 +24,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Executar Agente Macro e Enviar no Telegram
+      - name: Executar Agente Macro e Enviar no Telegram e E-mail
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
         run: |
           python main.py
