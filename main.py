@@ -54,115 +54,1029 @@ TELEGRAM_MAX_CHAR = 3800
 # mensal ou trimestral). O processamento posterior normaliza as datas.
 # =====================================================================
 
-SERIES_MAP = {
+# =====================================================================
+# DICIONÁRIO DE METADADOS DAS SÉRIES DO FRED
+# =====================================================================
+#
+# Campos:
+#
+# fred_id:
+#     ID oficial da série no FRED.
+#
+# nome:
+#     Nome amigável usado no relatório.
+#
+# grupo:
+#     Bloco macroeconômico ao qual pertence.
+#
+# unidade:
+#     Unidade econômica da série.
+#
+# natureza:
+#     Tipo econômico do indicador:
+#     estoque / fluxo / taxa / índice / spread / preço.
+#
+# frequencia:
+#     Frequência original aproximada da série.
+#
+# maior_e_melhor:
+#     Indica se, isoladamente, um aumento costuma ser positivo para
+#     a variável econômica/mercado analisado.
+#
+# interpretacao_alta:
+#     Como interpretar um aumento.
+#
+# interpretacao_baixa:
+#     Como interpretar uma queda.
+#
+# horizonte_principal:
+#     Horizonte mais adequado para avaliar a tendência.
+#
+# comparacoes:
+#     Janelas temporais mais úteis.
+#
+# tipo_momentum:
+#     Como avaliar momentum.
+#
+# impacto_risco:
+#     Relação geral com risk-on/risk-off.
+#
+# observacao:
+#     Cuidados específicos para interpretação.
+# =====================================================================
 
-    # ---------------------------------------------------------------
+SERIES_METADATA = {
+
+    # ================================================================
     # LIQUIDEZ
-    # ---------------------------------------------------------------
-    "WALCL": "Fed_Total_Assets_M",
-    "WTREGEN": "TGA_Balance_M",
-    "RRPONTSYD": "ON_RRP_B",
-    "WRESBAL": "Bank_Reserves_M",
-    "M2SL": "M2_B",
+    # ================================================================
 
-    # ---------------------------------------------------------------
+    "WALCL": {
+        "nome": "Fed Total Assets",
+        "coluna": "Fed_Total_Assets_M",
+        "grupo": "Liquidez",
+        "unidade": "USD milhões",
+        "natureza": "estoque",
+        "frequencia": "semanal",
+        "maior_e_melhor": None,
+        "interpretacao_alta": (
+            "Expansão do balanço do Fed. Pode representar maior liquidez, "
+            "mas não deve ser interpretada isoladamente como expansão de "
+            "liquidez disponível para ativos de risco."
+        ),
+        "interpretacao_baixa": (
+            "Contração do balanço do Fed, geralmente associada a QT quando "
+            "não houver outros fatores compensatórios."
+        ),
+        "horizonte_principal": "1-6 meses",
+        "comparacoes": ["30D", "90D", "365D"],
+        "tipo_momentum": "variação percentual e absoluta",
+        "impacto_risco": "expansão tende a favorecer condições financeiras",
+        "observacao": (
+            "Não confundir tamanho do balanço com liquidez líquida."
+        ),
+    },
+
+    "WTREGEN": {
+        "nome": "Treasury General Account (TGA)",
+        "coluna": "TGA_Balance_M",
+        "grupo": "Liquidez",
+        "unidade": "USD milhões",
+        "natureza": "estoque",
+        "frequencia": "semanal",
+        "maior_e_melhor": None,
+        "interpretacao_alta": (
+            "Em igualdade de condições, aumento do TGA retira liquidez "
+            "do sistema bancário."
+        ),
+        "interpretacao_baixa": (
+            "Em igualdade de condições, redução do TGA libera liquidez "
+            "para o sistema."
+        ),
+        "horizonte_principal": "30-90 dias",
+        "comparacoes": ["30D", "90D"],
+        "tipo_momentum": "variação absoluta",
+        "impacto_risco": "TGA subindo tende a ser restritivo para liquidez",
+        "observacao": (
+            "O efeito depende da forma de financiamento e dos fluxos "
+            "entre Tesouro, bancos e mercado."
+        ),
+    },
+
+    "RRPONTSYD": {
+        "nome": "ON RRP",
+        "coluna": "ON_RRP_B",
+        "grupo": "Liquidez",
+        "unidade": "USD bilhões",
+        "natureza": "estoque",
+        "frequencia": "diária",
+        "maior_e_melhor": None,
+        "interpretacao_alta": (
+            "Maior utilização do ON RRP representa recursos estacionados "
+            "no Fed e pode reduzir liquidez disponível nos mercados."
+        ),
+        "interpretacao_baixa": (
+            "Queda do ON RRP pode liberar recursos para o sistema financeiro."
+        ),
+        "horizonte_principal": "30-90 dias",
+        "comparacoes": ["30D", "90D"],
+        "tipo_momentum": "variação absoluta",
+        "impacto_risco": "queda tende a ser favorável à liquidez enquanto houver saldo relevante",
+        "observacao": (
+            "O impacto marginal diminui à medida que o saldo se aproxima "
+            "de níveis muito baixos."
+        ),
+    },
+
+    "WRESBAL": {
+        "nome": "Bank Reserves",
+        "coluna": "Bank_Reserves_M",
+        "grupo": "Liquidez",
+        "unidade": "USD milhões",
+        "natureza": "estoque",
+        "frequencia": "semanal",
+        "maior_e_melhor": True,
+        "interpretacao_alta": (
+            "Maior nível de reservas bancárias tende a indicar condições "
+            "de liquidez bancária mais confortáveis."
+        ),
+        "interpretacao_baixa": (
+            "Queda das reservas pode indicar redução da folga de liquidez."
+        ),
+        "horizonte_principal": "30-90 dias",
+        "comparacoes": ["30D", "90D", "365D"],
+        "tipo_momentum": "variação absoluta",
+        "impacto_risco": "reservas crescendo tendem a favorecer condições financeiras",
+        "observacao": (
+            "Reservas elevadas não significam necessariamente expansão "
+            "do crédito ou dos preços dos ativos."
+        ),
+    },
+
+    "M2SL": {
+        "nome": "M2",
+        "coluna": "M2_B",
+        "grupo": "Liquidez",
+        "unidade": "USD bilhões",
+        "natureza": "estoque monetário",
+        "frequencia": "mensal",
+        "maior_e_melhor": True,
+        "interpretacao_alta": (
+            "Expansão da quantidade de moeda ampla na economia."
+        ),
+        "interpretacao_baixa": (
+            "Contração ou desaceleração da moeda ampla."
+        ),
+        "horizonte_principal": "3-12 meses",
+        "comparacoes": ["90D", "365D"],
+        "tipo_momentum": "variação percentual anualizada",
+        "impacto_risco": "crescimento monetário tende a apoiar condições financeiras no médio prazo",
+        "observacao": (
+            "M2 é mensal e possui relação imperfeita e variável com preços "
+            "dos ativos no curto prazo."
+        ),
+    },
+
+
+    # ================================================================
     # POLÍTICA MONETÁRIA
-    # ---------------------------------------------------------------
-    "FEDFUNDS": "Fed_Funds_Rate",
-    "EFFR": "Effective_Fed_Funds_Rate",
+    # ================================================================
 
-    # ---------------------------------------------------------------
-    # CURVA DE JUROS NOMINAL
-    # ---------------------------------------------------------------
-    "DGS3MO": "Yield_3M",
-    "DGS2": "Yield_2Y",
-    "DGS5": "Yield_5Y",
-    "DGS10": "Yield_10Y",
-    "DGS30": "Yield_30Y",
+    "FEDFUNDS": {
+        "nome": "Federal Funds Rate",
+        "coluna": "Fed_Funds_Rate",
+        "grupo": "Política Monetária",
+        "unidade": "%",
+        "natureza": "taxa",
+        "frequencia": "mensal",
+        "maior_e_melhor": False,
+        "interpretacao_alta": (
+            "Política monetária mais restritiva, em igualdade de condições."
+        ),
+        "interpretacao_baixa": (
+            "Política monetária mais expansionista, em igualdade de condições."
+        ),
+        "horizonte_principal": "1-12 meses",
+        "comparacoes": ["30D", "90D", "365D"],
+        "tipo_momentum": "mudança em pontos percentuais",
+        "impacto_risco": "taxas maiores tendem a apertar condições financeiras",
+        "observacao": (
+            "Interpretar junto com inflação, crescimento e expectativas "
+            "de política monetária."
+        ),
+    },
 
-    # Curvas específicas
-    "T10Y2Y": "Yield_Curve_10Y2Y",
-    "T10Y3M": "Yield_Curve_10Y3M",
+    "EFFR": {
+        "nome": "Effective Federal Funds Rate",
+        "coluna": "Effective_Fed_Funds_Rate",
+        "grupo": "Política Monetária",
+        "unidade": "%",
+        "natureza": "taxa",
+        "frequencia": "diária",
+        "maior_e_melhor": False,
+        "interpretacao_alta": "Condições monetárias mais restritivas.",
+        "interpretacao_baixa": "Condições monetárias menos restritivas.",
+        "horizonte_principal": "1-30 dias",
+        "comparacoes": ["30D", "90D"],
+        "tipo_momentum": "mudança em pontos percentuais",
+        "impacto_risco": "taxa maior tende a restringir liquidez",
+        "observacao": (
+            "Usar em conjunto com Fed Funds e demais indicadores."
+        ),
+    },
 
-    # ---------------------------------------------------------------
-    # JUROS REAIS E EXPECTATIVAS DE INFLAÇÃO
-    # ---------------------------------------------------------------
-    "DFII5": "Real_Yield_5Y",
-    "DFII10": "Real_Yield_10Y",
-    "DFII30": "Real_Yield_30Y",
 
-    "T5YIE": "Breakeven_Inflation_5Y",
-    "T10YIE": "Breakeven_Inflation_10Y",
+    # ================================================================
+    # CURVA DE JUROS
+    # ================================================================
 
-    # ---------------------------------------------------------------
+    "DGS3MO": {
+        "nome": "Treasury 3M",
+        "coluna": "Yield_3M",
+        "grupo": "Curva de Juros",
+        "unidade": "%",
+        "natureza": "taxa",
+        "frequencia": "diária",
+        "maior_e_melhor": False,
+        "interpretacao_alta": "Maior custo de financiamento de curto prazo.",
+        "interpretacao_baixa": "Menor custo de financiamento de curto prazo.",
+        "horizonte_principal": "1-90 dias",
+        "comparacoes": ["30D", "90D"],
+        "tipo_momentum": "mudança em pontos percentuais",
+        "impacto_risco": "taxas curtas maiores tendem a apertar condições financeiras",
+        "observacao": "Interpretar principalmente em conjunto com Fed Funds.",
+    },
+
+    "DGS2": {
+        "nome": "Treasury 2Y",
+        "coluna": "Yield_2Y",
+        "grupo": "Curva de Juros",
+        "unidade": "%",
+        "natureza": "taxa",
+        "frequencia": "diária",
+        "maior_e_melhor": False,
+        "interpretacao_alta": (
+            "Mercado pode estar precificando juros de curto/médio prazo "
+            "mais altos ou maior prêmio."
+        ),
+        "interpretacao_baixa": (
+            "Pode indicar expectativa de política monetária mais branda."
+        ),
+        "horizonte_principal": "1-6 meses",
+        "comparacoes": ["30D", "90D", "365D"],
+        "tipo_momentum": "mudança em pontos percentuais",
+        "impacto_risco": "aumento persistente tende a pressionar ativos de risco",
+        "observacao": "Não interpretar isoladamente.",
+    },
+
+    "DGS5": {
+        "nome": "Treasury 5Y",
+        "coluna": "Yield_5Y",
+        "grupo": "Curva de Juros",
+        "unidade": "%",
+        "natureza": "taxa",
+        "frequencia": "diária",
+        "maior_e_melhor": False,
+        "interpretacao_alta": (
+            "Maior taxa intermediária; pode refletir inflação, crescimento "
+            "ou expectativas de juros."
+        ),
+        "interpretacao_baixa": "Menor taxa intermediária.",
+        "horizonte_principal": "3-12 meses",
+        "comparacoes": ["30D", "90D", "365D"],
+        "tipo_momentum": "mudança em pontos percentuais",
+        "impacto_risco": "depende da causa do movimento",
+        "observacao": "Separar juros reais de expectativas de inflação.",
+    },
+
+    "DGS10": {
+        "nome": "Treasury 10Y",
+        "coluna": "Yield_10Y",
+        "grupo": "Curva de Juros",
+        "unidade": "%",
+        "natureza": "taxa",
+        "frequencia": "diária",
+        "maior_e_melhor": False,
+        "interpretacao_alta": (
+            "Pode refletir maior crescimento, inflação, prêmio de prazo "
+            "ou risco fiscal."
+        ),
+        "interpretacao_baixa": (
+            "Pode refletir menor crescimento, inflação ou busca por segurança."
+        ),
+        "horizonte_principal": "3-12 meses",
+        "comparacoes": ["30D", "90D", "365D"],
+        "tipo_momentum": "mudança em pontos percentuais",
+        "impacto_risco": "depende do componente responsável pelo movimento",
+        "observacao": (
+            "Analisar conjuntamente com real yield e breakeven."
+        ),
+    },
+
+    "DGS30": {
+        "nome": "Treasury 30Y",
+        "coluna": "Yield_30Y",
+        "grupo": "Curva de Juros",
+        "unidade": "%",
+        "natureza": "taxa",
+        "frequencia": "diária",
+        "maior_e_melhor": False,
+        "interpretacao_alta": (
+            "Pode refletir maior prêmio de prazo, inflação esperada, "
+            "crescimento ou risco fiscal."
+        ),
+        "interpretacao_baixa": "Menor taxa longa.",
+        "horizonte_principal": "6-24 meses",
+        "comparacoes": ["30D", "90D", "365D"],
+        "tipo_momentum": "mudança em pontos percentuais",
+        "impacto_risco": "aumento persistente pode pressionar valuation",
+        "observacao": "Muito sensível ao prêmio de prazo.",
+    },
+
+    "T10Y2Y": {
+        "nome": "Curva 10Y-2Y",
+        "coluna": "Yield_Curve_10Y2Y",
+        "grupo": "Curva de Juros",
+        "unidade": "pontos percentuais",
+        "natureza": "spread de taxas",
+        "frequencia": "diária",
+        "maior_e_melhor": None,
+        "interpretacao_alta": (
+            "Maior inclinação da curva. A interpretação depende da causa."
+        ),
+        "interpretacao_baixa": (
+            "Maior achatamento ou inversão da curva."
+        ),
+        "horizonte_principal": "1-12 meses",
+        "comparacoes": ["30D", "90D", "365D"],
+        "tipo_momentum": "mudança em pontos percentuais",
+        "impacto_risco": "inversão pode sinalizar restrição monetária; desinclinação pode ter causas diversas",
+        "observacao": (
+            "Não interpretar simplesmente curva positiva como bullish "
+            "ou negativa como bearish."
+        ),
+    },
+
+    "T10Y3M": {
+        "nome": "Curva 10Y-3M",
+        "coluna": "Yield_Curve_10Y3M",
+        "grupo": "Curva de Juros",
+        "unidade": "pontos percentuais",
+        "natureza": "spread de taxas",
+        "frequencia": "diária",
+        "maior_e_melhor": None,
+        "interpretacao_alta": "Maior inclinação.",
+        "interpretacao_baixa": "Maior achatamento ou inversão.",
+        "horizonte_principal": "1-12 meses",
+        "comparacoes": ["30D", "90D", "365D"],
+        "tipo_momentum": "mudança em pontos percentuais",
+        "impacto_risco": "deve ser analisado em conjunto com ciclo econômico",
+        "observacao": "Indicador de curva, não previsão isolada de recessão.",
+    },
+
+
+    # ================================================================
+    # JUROS REAIS
+    # ================================================================
+
+    "DFII5": {
+        "nome": "Real Yield 5Y",
+        "coluna": "Real_Yield_5Y",
+        "grupo": "Juros Reais",
+        "unidade": "%",
+        "natureza": "taxa real",
+        "frequencia": "diária",
+        "maior_e_melhor": False,
+        "interpretacao_alta": (
+            "Aumento do custo real de capital."
+        ),
+        "interpretacao_baixa": (
+            "Redução do custo real de capital."
+        ),
+        "horizonte_principal": "1-6 meses",
+        "comparacoes": ["30D", "90D", "365D"],
+        "tipo_momentum": "mudança em pontos percentuais",
+        "impacto_risco": "juros reais maiores tendem a pressionar valuation",
+        "observacao": "Importante para ações de duration longa e ouro.",
+    },
+
+    "DFII10": {
+        "nome": "Real Yield 10Y",
+        "coluna": "Real_Yield_10Y",
+        "grupo": "Juros Reais",
+        "unidade": "%",
+        "natureza": "taxa real",
+        "frequencia": "diária",
+        "maior_e_melhor": False,
+        "interpretacao_alta": (
+            "Maior custo real de capital e maior taxa livre de risco real."
+        ),
+        "interpretacao_baixa": (
+            "Menor custo real de capital."
+        ),
+        "horizonte_principal": "1-12 meses",
+        "comparacoes": ["30D", "90D", "365D"],
+        "tipo_momentum": "mudança em pontos percentuais",
+        "impacto_risco": (
+            "aumento tende a pressionar ativos de duration longa e ouro"
+        ),
+        "observacao": (
+            "Uma das séries mais importantes para valuation de ativos de risco."
+        ),
+    },
+
+    "DFII30": {
+        "nome": "Real Yield 30Y",
+        "coluna": "Real_Yield_30Y",
+        "grupo": "Juros Reais",
+        "unidade": "%",
+        "natureza": "taxa real",
+        "frequencia": "diária",
+        "maior_e_melhor": False,
+        "interpretacao_alta": "Maior custo real de capital de longo prazo.",
+        "interpretacao_baixa": "Menor custo real de capital.",
+        "horizonte_principal": "6-24 meses",
+        "comparacoes": ["30D", "90D", "365D"],
+        "tipo_momentum": "mudança em pontos percentuais",
+        "impacto_risco": "aumento tende a pressionar valuation de duration longa",
+        "observacao": "Interpretar em conjunto com Treasury 30Y.",
+    },
+
+
+    # ================================================================
+    # EXPECTATIVAS DE INFLAÇÃO
+    # ================================================================
+
+    "T5YIE": {
+        "nome": "Breakeven Inflation 5Y",
+        "coluna": "Breakeven_Inflation_5Y",
+        "grupo": "Expectativas de Inflação",
+        "unidade": "%",
+        "natureza": "expectativa implícita",
+        "frequencia": "diária",
+        "maior_e_melhor": None,
+        "interpretacao_alta": (
+            "Maior inflação implícita esperada pelo mercado."
+        ),
+        "interpretacao_baixa": (
+            "Menor inflação implícita esperada."
+        ),
+        "horizonte_principal": "1-6 meses",
+        "comparacoes": ["30D", "90D", "365D"],
+        "tipo_momentum": "mudança em pontos percentuais",
+        "impacto_risco": "aumento persistente pode pressionar juros e valuation",
+        "observacao": (
+            "Não representa expectativa pura de inflação; contém prêmio "
+            "de liquidez e outros componentes."
+        ),
+    },
+
+    "T10YIE": {
+        "nome": "Breakeven Inflation 10Y",
+        "coluna": "Breakeven_Inflation_10Y",
+        "grupo": "Expectativas de Inflação",
+        "unidade": "%",
+        "natureza": "expectativa implícita",
+        "frequencia": "diária",
+        "maior_e_melhor": None,
+        "interpretacao_alta": "Maior inflação implícita de longo prazo.",
+        "interpretacao_baixa": "Menor inflação implícita.",
+        "horizonte_principal": "3-12 meses",
+        "comparacoes": ["30D", "90D", "365D"],
+        "tipo_momentum": "mudança em pontos percentuais",
+        "impacto_risco": "aumento pode pressionar juros nominais",
+        "observacao": "Interpretar junto com juros reais.",
+    },
+
+
+    # ================================================================
     # INFLAÇÃO
-    # ---------------------------------------------------------------
-    "CPIAUCSL": "CPI",
-    "CPILFESL": "Core_CPI",
-    "PCEPI": "PCE",
-    "PCEPILFE": "Core_PCE",
+    # ================================================================
 
-    # ---------------------------------------------------------------
-    # ATIVIDADE ECONÔMICA
-    # ---------------------------------------------------------------
-    "GDPC1": "Real_GDP",
-    "INDPRO": "Industrial_Production",
-    "HOUST": "Housing_Starts",
-    "RSAFS": "Retail_Sales",
+    "CPIAUCSL": {
+        "nome": "CPI",
+        "coluna": "CPI",
+        "grupo": "Inflação",
+        "unidade": "índice",
+        "natureza": "índice de preços",
+        "frequencia": "mensal",
+        "maior_e_melhor": False,
+        "interpretacao_alta": "Maior nível de preços.",
+        "interpretacao_baixa": "Menor nível de preços.",
+        "horizonte_principal": "3-12 meses",
+        "comparacoes": ["30D", "90D", "365D"],
+        "tipo_momentum": "variação percentual anual",
+        "impacto_risco": "inflação persistente pode manter política monetária restritiva",
+        "observacao": (
+            "O nível do índice não deve ser confundido com a taxa de inflação."
+        ),
+    },
 
-    # Indicador antecedente
-    "USSLIND": "Leading_Index",
+    "CPILFESL": {
+        "nome": "Core CPI",
+        "coluna": "Core_CPI",
+        "grupo": "Inflação",
+        "unidade": "índice",
+        "natureza": "índice de preços",
+        "frequencia": "mensal",
+        "maior_e_melhor": False,
+        "interpretacao_alta": "Maior inflação subjacente.",
+        "interpretacao_baixa": "Menor inflação subjacente.",
+        "horizonte_principal": "3-12 meses",
+        "comparacoes": ["30D", "90D", "365D"],
+        "tipo_momentum": "variação percentual anual",
+        "impacto_risco": "persistência pode manter juros elevados",
+        "observacao": "Dar atenção a serviços e componentes persistentes.",
+    },
 
-    # ---------------------------------------------------------------
+    "PCEPI": {
+        "nome": "PCE",
+        "coluna": "PCE",
+        "grupo": "Inflação",
+        "unidade": "índice",
+        "natureza": "índice de preços",
+        "frequencia": "mensal",
+        "maior_e_melhor": False,
+        "interpretacao_alta": "Maior nível de preços.",
+        "interpretacao_baixa": "Menor nível de preços.",
+        "horizonte_principal": "3-12 meses",
+        "comparacoes": ["30D", "90D", "365D"],
+        "tipo_momentum": "variação percentual anual",
+        "impacto_risco": "inflação elevada tende a limitar cortes de juros",
+        "observacao": "Indicador de inflação preferido pelo Fed.",
+    },
+
+    "PCEPILFE": {
+        "nome": "Core PCE",
+        "coluna": "Core_PCE",
+        "grupo": "Inflação",
+        "unidade": "índice",
+        "natureza": "índice de preços",
+        "frequencia": "mensal",
+        "maior_e_melhor": False,
+        "interpretacao_alta": "Maior inflação subjacente.",
+        "interpretacao_baixa": "Menor inflação subjacente.",
+        "horizonte_principal": "3-12 meses",
+        "comparacoes": ["30D", "90D", "365D"],
+        "tipo_momentum": "variação percentual anual",
+        "impacto_risco": "persistência tende a manter política monetária restritiva",
+        "observacao": "Dar preferência ao momentum da inflação, não apenas ao nível.",
+    },
+
+
+    # ================================================================
+    # ATIVIDADE
+    # ================================================================
+
+    "GDPC1": {
+        "nome": "Real GDP",
+        "coluna": "Real_GDP",
+        "grupo": "Ciclo Econômico",
+        "unidade": "USD bilhões encadeados",
+        "natureza": "fluxo",
+        "frequencia": "trimestral",
+        "maior_e_melhor": True,
+        "interpretacao_alta": "Maior atividade econômica.",
+        "interpretacao_baixa": "Menor atividade econômica.",
+        "horizonte_principal": "3-12 meses",
+        "comparacoes": ["90D", "365D"],
+        "tipo_momentum": "crescimento trimestral/anual",
+        "impacto_risco": "crescimento maior tende a favorecer ativos cíclicos",
+        "observacao": (
+            "É um indicador atrasado; não deve ser usado sozinho para "
+            "identificar mudanças recentes."
+        ),
+    },
+
+    "INDPRO": {
+        "nome": "Industrial Production",
+        "coluna": "Industrial_Production",
+        "grupo": "Ciclo Econômico",
+        "unidade": "índice",
+        "natureza": "índice de atividade",
+        "frequencia": "mensal",
+        "maior_e_melhor": True,
+        "interpretacao_alta": "Maior produção industrial.",
+        "interpretacao_baixa": "Menor produção industrial.",
+        "horizonte_principal": "1-6 meses",
+        "comparacoes": ["30D", "90D", "365D"],
+        "tipo_momentum": "variação percentual",
+        "impacto_risco": "crescimento tende a favorecer ativos cíclicos",
+        "observacao": "Indicador coincidente do ciclo industrial.",
+    },
+
+    "HOUST": {
+        "nome": "Housing Starts",
+        "coluna": "Housing_Starts",
+        "grupo": "Ciclo Econômico",
+        "unidade": "milhares de unidades anualizadas",
+        "natureza": "fluxo",
+        "frequencia": "mensal",
+        "maior_e_melhor": True,
+        "interpretacao_alta": "Maior atividade de construção residencial.",
+        "interpretacao_baixa": "Menor atividade de construção.",
+        "horizonte_principal": "1-6 meses",
+        "comparacoes": ["30D", "90D", "365D"],
+        "tipo_momentum": "variação percentual",
+        "impacto_risco": "aumento tende a indicar atividade econômica mais forte",
+        "observacao": "Volátil; utilizar tendência e não observação isolada.",
+    },
+
+    "RSAFS": {
+        "nome": "Retail Sales",
+        "coluna": "Retail_Sales",
+        "grupo": "Ciclo Econômico",
+        "unidade": "USD milhões",
+        "natureza": "fluxo",
+        "frequencia": "mensal",
+        "maior_e_melhor": True,
+        "interpretacao_alta": "Maior consumo nominal.",
+        "interpretacao_baixa": "Menor consumo nominal.",
+        "horizonte_principal": "1-6 meses",
+        "comparacoes": ["30D", "90D", "365D"],
+        "tipo_momentum": "variação percentual",
+        "impacto_risco": "crescimento favorece ativos cíclicos",
+        "observacao": (
+            "É nominal; deve ser interpretado em conjunto com inflação."
+        ),
+    },
+
+    "USSLIND": {
+        "nome": "US Leading Index",
+        "coluna": "Leading_Index",
+        "grupo": "Ciclo Econômico",
+        "unidade": "índice",
+        "natureza": "indicador composto",
+        "frequencia": "mensal",
+        "maior_e_melhor": True,
+        "interpretacao_alta": "Sinal de melhora nas perspectivas econômicas.",
+        "interpretacao_baixa": "Sinal de deterioração das perspectivas.",
+        "horizonte_principal": "3-12 meses",
+        "comparacoes": ["30D", "90D", "365D"],
+        "tipo_momentum": "variação percentual",
+        "impacto_risco": "melhora tende a favorecer ativos cíclicos",
+        "observacao": (
+            "É um indicador antecedente; deve receber peso maior que "
+            "indicadores econômicos atrasados quando houver divergência."
+        ),
+    },
+
+
+    # ================================================================
     # MERCADO DE TRABALHO
-    # ---------------------------------------------------------------
-    "UNRATE": "Unemployment_Rate",
-    "PAYEMS": "Nonfarm_Payrolls",
-    "ICSA": "Initial_Jobless_Claims",
+    # ================================================================
 
-    # ---------------------------------------------------------------
+    "UNRATE": {
+        "nome": "Unemployment Rate",
+        "coluna": "Unemployment_Rate",
+        "grupo": "Mercado de Trabalho",
+        "unidade": "%",
+        "natureza": "taxa",
+        "frequencia": "mensal",
+        "maior_e_melhor": False,
+        "interpretacao_alta": "Maior desemprego e possível deterioração do mercado de trabalho.",
+        "interpretacao_baixa": "Menor desemprego.",
+        "horizonte_principal": "3-12 meses",
+        "comparacoes": ["30D", "90D", "365D"],
+        "tipo_momentum": "mudança em pontos percentuais",
+        "impacto_risco": "aumento persistente pode sinalizar desaceleração",
+        "observacao": (
+            "É um indicador atrasado; combine com payrolls e jobless claims."
+        ),
+    },
+
+    "PAYEMS": {
+        "nome": "Nonfarm Payrolls",
+        "coluna": "Nonfarm_Payrolls",
+        "grupo": "Mercado de Trabalho",
+        "unidade": "milhares",
+        "natureza": "estoque/emprego",
+        "frequencia": "mensal",
+        "maior_e_melhor": True,
+        "interpretacao_alta": "Maior nível de emprego.",
+        "interpretacao_baixa": "Menor nível de emprego.",
+        "horizonte_principal": "1-6 meses",
+        "comparacoes": ["30D", "90D", "365D"],
+        "tipo_momentum": "crescimento mensal e média de 3 meses",
+        "impacto_risco": "crescimento do emprego tende a sustentar consumo",
+        "observacao": (
+            "Mais útil avaliar média móvel de 3 meses do que uma única leitura."
+        ),
+    },
+
+    "ICSA": {
+        "nome": "Initial Jobless Claims",
+        "coluna": "Initial_Jobless_Claims",
+        "grupo": "Mercado de Trabalho",
+        "unidade": "número de pedidos",
+        "natureza": "fluxo",
+        "frequencia": "semanal",
+        "maior_e_melhor": False,
+        "interpretacao_alta": "Maior número de novos pedidos de seguro-desemprego.",
+        "interpretacao_baixa": "Menor número de pedidos.",
+        "horizonte_principal": "1-3 meses",
+        "comparacoes": ["30D", "90D"],
+        "tipo_momentum": "média móvel e variação percentual",
+        "impacto_risco": "aumento persistente sinaliza deterioração do trabalho",
+        "observacao": (
+            "Indicador relativamente rápido. Avaliar média móvel para reduzir ruído."
+        ),
+    },
+
+
+    # ================================================================
     # CRÉDITO
-    # ---------------------------------------------------------------
-    "BAMLH0A0HYM2": "HY_Spread_Pct",
-    "BAMLC0A0CM": "IG_Spread_Pct",
+    # ================================================================
 
-    # ---------------------------------------------------------------
+    "BAMLH0A0HYM2": {
+        "nome": "High Yield OAS",
+        "coluna": "HY_Spread_Pct",
+        "grupo": "Crédito",
+        "unidade": "%",
+        "natureza": "spread de crédito",
+        "frequencia": "diária",
+        "maior_e_melhor": False,
+        "interpretacao_alta": (
+            "Maior prêmio de risco exigido para crédito High Yield; "
+            "deterioração das condições de crédito."
+        ),
+        "interpretacao_baixa": (
+            "Menor prêmio de risco; condições de crédito mais benignas."
+        ),
+        "horizonte_principal": "1-6 meses",
+        "comparacoes": ["30D", "90D", "365D"],
+        "tipo_momentum": "variação em pontos percentuais e z-score",
+        "impacto_risco": "spreads subindo tendem a sinalizar risk-off",
+        "observacao": (
+            "Uma das séries mais importantes para detectar estresse "
+            "financeiro."
+        ),
+    },
+
+    "BAMLC0A0CM": {
+        "nome": "Investment Grade OAS",
+        "coluna": "IG_Spread_Pct",
+        "grupo": "Crédito",
+        "unidade": "%",
+        "natureza": "spread de crédito",
+        "frequencia": "diária",
+        "maior_e_melhor": False,
+        "interpretacao_alta": "Maior prêmio de risco no crédito Investment Grade.",
+        "interpretacao_baixa": "Menor prêmio de risco.",
+        "horizonte_principal": "1-6 meses",
+        "comparacoes": ["30D", "90D", "365D"],
+        "tipo_momentum": "variação em pontos percentuais e z-score",
+        "impacto_risco": "aumento persistente sinaliza deterioração financeira",
+        "observacao": "Menos sensível que HY a deteriorações extremas.",
+    },
+
+
+    # ================================================================
     # CONDIÇÕES FINANCEIRAS
-    # ---------------------------------------------------------------
-    "NFCI": "Chicago_Financial_Conditions",
+    # ================================================================
 
-    # ---------------------------------------------------------------
-    # MERCADO DE AÇÕES
-    # ---------------------------------------------------------------
-    "SP500": "SP500",
-    "NASDAQCOM": "NASDAQ",
+    "NFCI": {
+        "nome": "Chicago Fed National Financial Conditions Index",
+        "coluna": "Chicago_Financial_Conditions",
+        "grupo": "Condições Financeiras",
+        "unidade": "índice",
+        "natureza": "índice composto",
+        "frequencia": "semanal",
+        "maior_e_melhor": False,
+        "interpretacao_alta": (
+            "Condições financeiras mais apertadas."
+        ),
+        "interpretacao_baixa": (
+            "Condições financeiras mais frouxas."
+        ),
+        "horizonte_principal": "1-6 meses",
+        "comparacoes": ["30D", "90D", "365D"],
+        "tipo_momentum": "mudança absoluta",
+        "impacto_risco": "aumento tende a ser negativo para ativos de risco",
+        "observacao": (
+            "Valores positivos representam condições mais apertadas "
+            "que a média histórica do indicador."
+        ),
+    },
 
-    # ---------------------------------------------------------------
+
+    # ================================================================
+    # AÇÕES
+    # ================================================================
+
+    "SP500": {
+        "nome": "S&P 500",
+        "coluna": "SP500",
+        "grupo": "Mercado de Ações",
+        "unidade": "pontos",
+        "natureza": "índice de preço",
+        "frequencia": "diária",
+        "maior_e_melhor": True,
+        "interpretacao_alta": "Valorização das ações americanas de grande capitalização.",
+        "interpretacao_baixa": "Desvalorização.",
+        "horizonte_principal": "1-12 meses",
+        "comparacoes": ["30D", "90D", "365D"],
+        "tipo_momentum": "retorno percentual",
+        "impacto_risco": "alta representa maior apetite por risco",
+        "observacao": (
+            "Preço não deve ser interpretado isoladamente; combinar com "
+            "juros reais, crédito, liquidez e valuation quando disponível."
+        ),
+    },
+
+    "NASDAQCOM": {
+        "nome": "NASDAQ Composite",
+        "coluna": "NASDAQ",
+        "grupo": "Mercado de Ações",
+        "unidade": "pontos",
+        "natureza": "índice de preço",
+        "frequencia": "diária",
+        "maior_e_melhor": True,
+        "interpretacao_alta": "Valorização do mercado acionário de tecnologia/crescimento.",
+        "interpretacao_baixa": "Desvalorização.",
+        "horizonte_principal": "1-12 meses",
+        "comparacoes": ["30D", "90D", "365D"],
+        "tipo_momentum": "retorno percentual",
+        "impacto_risco": "sensível a liquidez e juros reais",
+        "observacao": (
+            "Possui duration elevada; juros reais são particularmente relevantes."
+        ),
+    },
+
+
+    # ================================================================
     # VOLATILIDADE
-    # ---------------------------------------------------------------
-    "VIXCLS": "VIX",
+    # ================================================================
 
-    # ---------------------------------------------------------------
+    "VIXCLS": {
+        "nome": "VIX",
+        "coluna": "VIX",
+        "grupo": "Volatilidade",
+        "unidade": "índice",
+        "natureza": "índice de volatilidade implícita",
+        "frequencia": "diária",
+        "maior_e_melhor": False,
+        "interpretacao_alta": "Maior volatilidade implícita e maior demanda por proteção.",
+        "interpretacao_baixa": "Menor volatilidade implícita.",
+        "horizonte_principal": "1-30 dias",
+        "comparacoes": ["5D", "30D", "90D"],
+        "tipo_momentum": "variação percentual e nível absoluto",
+        "impacto_risco": "aumento rápido tende a sinalizar risk-off",
+        "observacao": (
+            "Nível baixo não significa ausência de risco; observar mudanças rápidas."
+        ),
+    },
+
+
+    # ================================================================
     # DÓLAR
-    # ---------------------------------------------------------------
-    "DTWEXBGS": "Dollar_Broad_Index",
-    "DEXUSEU": "Dollar_Euro",
-    "DEXJPUS": "Dollar_Yen",
+    # ================================================================
 
-    # ---------------------------------------------------------------
+    "DTWEXBGS": {
+        "nome": "Broad Dollar Index",
+        "coluna": "Dollar_Broad_Index",
+        "grupo": "Dólar",
+        "unidade": "índice",
+        "natureza": "índice cambial",
+        "frequencia": "diária",
+        "maior_e_melhor": None,
+        "interpretacao_alta": (
+            "Dólar mais forte frente a uma cesta ampla de moedas."
+        ),
+        "interpretacao_baixa": (
+            "Dólar mais fraco."
+        ),
+        "horizonte_principal": "1-6 meses",
+        "comparacoes": ["30D", "90D", "365D"],
+        "tipo_momentum": "retorno percentual",
+        "impacto_risco": (
+            "Dólar forte pode apertar condições financeiras globais; "
+            "efeito depende do contexto."
+        ),
+        "observacao": (
+            "Particularmente importante para liquidez global e mercados emergentes."
+        ),
+    },
+
+    "DEXUSEU": {
+        "nome": "USD/EUR",
+        "coluna": "Dollar_Euro",
+        "grupo": "Dólar",
+        "unidade": "USD por EUR",
+        "natureza": "câmbio",
+        "frequencia": "diária",
+        "maior_e_melhor": None,
+        "interpretacao_alta": "Euro mais forte frente ao dólar.",
+        "interpretacao_baixa": "Dólar mais forte frente ao euro.",
+        "horizonte_principal": "1-6 meses",
+        "comparacoes": ["30D", "90D", "365D"],
+        "tipo_momentum": "variação percentual",
+        "impacto_risco": "efeito indireto sobre condições financeiras",
+        "observacao": "Não confundir cotação com índice amplo do dólar.",
+    },
+
+    "DEXJPUS": {
+        "nome": "USD/JPY",
+        "coluna": "Dollar_Yen",
+        "grupo": "Dólar",
+        "unidade": "JPY por USD",
+        "natureza": "câmbio",
+        "frequencia": "diária",
+        "maior_e_melhor": None,
+        "interpretacao_alta": "Dólar mais forte / iene mais fraco.",
+        "interpretacao_baixa": "Dólar mais fraco / iene mais forte.",
+        "horizonte_principal": "1-6 meses",
+        "comparacoes": ["30D", "90D", "365D"],
+        "tipo_momentum": "variação percentual",
+        "impacto_risco": "pode sinalizar mudanças em carry trade e liquidez global",
+        "observacao": "Interpretar em conjunto com juros japoneses e americanos.",
+    },
+
+
+    # ================================================================
     # COMMODITIES
-    # ---------------------------------------------------------------
-    "DCOILWTICO": "WTI_Oil",
+    # ================================================================
 
-    # Preço do ouro em USD/oz.
-    "GOLDAMGBD228NLBM": "Gold_USD",
+    "DCOILWTICO": {
+        "nome": "WTI Crude Oil",
+        "coluna": "WTI_Oil",
+        "grupo": "Commodities",
+        "unidade": "USD/barril",
+        "natureza": "preço",
+        "frequencia": "diária",
+        "maior_e_melhor": None,
+        "interpretacao_alta": (
+            "Maior preço do petróleo; pode aumentar inflação e favorecer "
+            "produtores de energia."
+        ),
+        "interpretacao_baixa": (
+            "Menor preço; pode aliviar inflação, mas também sinalizar "
+            "menor demanda global."
+        ),
+        "horizonte_principal": "1-6 meses",
+        "comparacoes": ["30D", "90D", "365D"],
+        "tipo_momentum": "retorno percentual",
+        "impacto_risco": "depende de oferta versus demanda",
+        "observacao": (
+            "Preço alto não é automaticamente bullish ou bearish; "
+            "identificar o mecanismo."
+        ),
+    },
 
-    # ---------------------------------------------------------------
+    "GOLDAMGBD228NLBM": {
+        "nome": "Gold",
+        "coluna": "Gold_USD",
+        "grupo": "Commodities",
+        "unidade": "USD/onça",
+        "natureza": "preço",
+        "frequencia": "diária",
+        "maior_e_melhor": None,
+        "interpretacao_alta": (
+            "Pode refletir queda dos juros reais, busca por proteção, "
+            "compras institucionais ou outros fatores."
+        ),
+        "interpretacao_baixa": (
+            "Pode refletir aumento dos juros reais ou redução da demanda "
+            "por proteção, entre outros fatores."
+        ),
+        "horizonte_principal": "1-12 meses",
+        "comparacoes": ["30D", "90D", "365D"],
+        "tipo_momentum": "retorno percentual",
+        "impacto_risco": (
+            "Frequentemente sensível a juros reais, dólar e risco sistêmico."
+        ),
+        "observacao": (
+            "Não assumir que ouro subindo significa necessariamente risk-off."
+        ),
+    },
+
+
+    # ================================================================
     # CRIPTO
-    # ---------------------------------------------------------------
-    "CBBTCUSD": "Bitcoin_USD",
-}
+    # ================================================================
 
+    "CBBTCUSD": {
+        "nome": "Bitcoin",
+        "coluna": "Bitcoin_USD",
+        "grupo": "Cripto",
+        "unidade": "USD",
+        "natureza": "preço",
+        "frequencia": "diária",
+        "maior_e_melhor": True,
+        "interpretacao_alta": "Valorização do Bitcoin.",
+        "interpretacao_baixa": "Desvalorização.",
+        "horizonte_principal": "1-12 meses",
+        "comparacoes": ["7D", "30D", "90D", "365D"],
+        "tipo_momentum": "retorno percentual e volatilidade",
+        "impacto_risco": (
+            "Sensível a liquidez, condições financeiras e apetite por risco."
+        ),
+        "observacao": (
+            "Alta volatilidade; não interpretar movimentos de curto prazo "
+            "como mudança macroestrutural sem confirmação."
+        ),
+    },
+}
 
 # =====================================================================
 # 4. COLETA DOS DADOS DO FRED
