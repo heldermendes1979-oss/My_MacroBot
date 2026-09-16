@@ -2,6 +2,8 @@ import os
 import sys
 import time
 import requests
+import smtplib
+from email.message import EmailMessage
 import pandas as pd
 import numpy as np
 
@@ -20,6 +22,13 @@ FRED_API_KEY = os.environ.get("FRED_API_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+
+# Configuração do e-mail
+EMAIL_RECIPIENT = "heldermendes1979@gmail.com"
+EMAIL_SENDER = os.environ.get("EMAIL_SENDER", EMAIL_RECIPIENT)
+EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD")
+EMAIL_SMTP_HOST = os.environ.get("EMAIL_SMTP_HOST", "smtp.gmail.com")
+EMAIL_SMTP_PORT = int(os.environ.get("EMAIL_SMTP_PORT", "465"))
 
 
 # =====================================================================
@@ -2196,8 +2205,59 @@ def enviar_relatorio_telegram_completo(
                 raise
 
 
+def validate_email_environment():
+    """Valida somente as credenciais necessárias para envio por e-mail."""
+    missing = []
+    if not EMAIL_SENDER:
+        missing.append("EMAIL_SENDER")
+    if not EMAIL_PASSWORD:
+        missing.append("EMAIL_PASSWORD")
+    if missing:
+        raise ValueError(
+            "Variáveis de e-mail ausentes: " + ", ".join(missing)
+        )
+
+
+def build_email_report(analise_ia: str) -> str:
+    """Monta a versão completa do relatório para envio por e-mail."""
+    return (
+        "MACROESTRATÉGIA — RELATÓRIO IA\n"
+        f"Execução: {datetime.now().strftime('%d/%m/%Y %H:%M')}\n"
+        + "=" * 78
+        + "\n\n"
+        + analise_ia.strip()
+    )
+
+
+def enviar_relatorio_email(analise_ia: str):
+    """Envia o relatório macro para o destinatário configurado."""
+    validate_email_environment()
+
+    msg = EmailMessage()
+    msg["Subject"] = (
+        "MacroEstratégia — Relatório Macro IA — "
+        f"{datetime.now().strftime('%d/%m/%Y %H:%M')}"
+    )
+    msg["From"] = EMAIL_SENDER
+    msg["To"] = EMAIL_RECIPIENT
+    msg.set_content(build_email_report(analise_ia))
+
+    print(f"\nEnviando relatório para e-mail: {EMAIL_RECIPIENT}...")
+
+    try:
+        with smtplib.SMTP_SSL(EMAIL_SMTP_HOST, EMAIL_SMTP_PORT, timeout=30) as server:
+            server.login(EMAIL_SENDER, EMAIL_PASSWORD)
+            server.send_message(msg)
+
+        print("  [✓] E-mail enviado com sucesso.")
+
+    except Exception as exc:
+        print(f"  [✗] Erro ao enviar e-mail: {exc}")
+        raise
+
+
 # =====================================================================
-# 12. EXECUÇÃO PRINCIPAL
+# 13. EXECUÇÃO PRINCIPAL
 # =====================================================================
 
 if __name__ == "__main__":
@@ -2221,14 +2281,34 @@ if __name__ == "__main__":
         relatorio_fred = generate_agent_prompt_payload(df_processed)
         analise_ia = analisar_macro_com_gemini(relatorio_fred)
 
-        enviar_relatorio_telegram_completo(
-            relatorio_fred,
-            analise_ia,
-            TELEGRAM_BOT_TOKEN,
-            TELEGRAM_CHAT_ID,
-        )
+        erros_entrega = []
 
-        print("\nProcesso concluído com sucesso.")
+        # Entrega pelo Telegram. Um erro aqui não impede o envio por e-mail.
+        try:
+            enviar_relatorio_telegram_completo(
+                relatorio_fred,
+                analise_ia,
+                TELEGRAM_BOT_TOKEN,
+                TELEGRAM_CHAT_ID,
+            )
+        except Exception as exc:
+            erros_entrega.append(f"Telegram: {exc}")
+            print(f"\n[!] Falha no envio ao Telegram; continuando para o e-mail: {exc}")
+
+        # O e-mail recebe a análise IA completa, sem o payload técnico bruto.
+        try:
+            enviar_relatorio_email(analise_ia)
+        except Exception as exc:
+            erros_entrega.append(f"E-mail: {exc}")
+            print(f"\n[!] Falha no envio por e-mail: {exc}")
+
+        if erros_entrega:
+            print("\nProcesso concluído com falhas de entrega:")
+            for erro in erros_entrega:
+                print(f"  - {erro}")
+            sys.exit(1)
+
+        print("\nProcesso concluído com sucesso em todos os canais.")
 
     except KeyboardInterrupt:
         print("\nExecução interrompida pelo usuário.")
