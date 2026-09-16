@@ -3,123 +3,968 @@ import sys
 import time
 import requests
 import pandas as pd
+import numpy as np
+
 from datetime import datetime, timedelta
 from fredapi import Fred
 from google import genai
 from google.genai import types
 from google.genai.errors import ServerError
 
+
 # =====================================================================
 # 1. LEITURA DE VARIÁVEIS DE AMBIENTE (SECRETS)
 # =====================================================================
+
 FRED_API_KEY = os.environ.get("FRED_API_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
+
 # =====================================================================
-# 2. COLETA E PROCESSAMENTO DOS DADOS DO FRED
+# 2. CONFIGURAÇÕES
 # =====================================================================
-def fetch_macro_data(api_key: str, lookback_years: int = 2) -> pd.DataFrame:
+
+LOOKBACK_YEARS = 2
+
+# Número máximo de caracteres por mensagem do Telegram.
+# Mantido abaixo do limite oficial para permitir alguma margem.
+TELEGRAM_MAX_CHAR = 3800
+
+
+# =====================================================================
+# 3. MAPA DE SÉRIES DO FRED
+# =====================================================================
+#
+# A análise foi dividida em grupos:
+#
+# LIQUIDEZ
+# JUROS
+# INFLAÇÃO
+# ATIVIDADE
+# MERCADO DE TRABALHO
+# CRÉDITO
+# CONDIÇÕES FINANCEIRAS
+# MERCADOS
+# DÓLAR / COMMODITIES
+#
+# Observação:
+# Algumas séries possuem frequências diferentes (diária, semanal,
+# mensal ou trimestral). O processamento posterior normaliza as datas.
+# =====================================================================
+
+SERIES_MAP = {
+
+    # ---------------------------------------------------------------
+    # LIQUIDEZ
+    # ---------------------------------------------------------------
+    "WALCL": "Fed_Total_Assets_M",
+    "WTREGEN": "TGA_Balance_M",
+    "RRPONTSYD": "ON_RRP_B",
+    "WRESBAL": "Bank_Reserves_M",
+    "M2SL": "M2_B",
+
+    # ---------------------------------------------------------------
+    # POLÍTICA MONETÁRIA
+    # ---------------------------------------------------------------
+    "FEDFUNDS": "Fed_Funds_Rate",
+    "EFFR": "Effective_Fed_Funds_Rate",
+
+    # ---------------------------------------------------------------
+    # CURVA DE JUROS NOMINAL
+    # ---------------------------------------------------------------
+    "DGS3MO": "Yield_3M",
+    "DGS2": "Yield_2Y",
+    "DGS5": "Yield_5Y",
+    "DGS10": "Yield_10Y",
+    "DGS30": "Yield_30Y",
+
+    # Curvas específicas
+    "T10Y2Y": "Yield_Curve_10Y2Y",
+    "T10Y3M": "Yield_Curve_10Y3M",
+
+    # ---------------------------------------------------------------
+    # JUROS REAIS E EXPECTATIVAS DE INFLAÇÃO
+    # ---------------------------------------------------------------
+    "DFII5": "Real_Yield_5Y",
+    "DFII10": "Real_Yield_10Y",
+    "DFII30": "Real_Yield_30Y",
+
+    "T5YIE": "Breakeven_Inflation_5Y",
+    "T10YIE": "Breakeven_Inflation_10Y",
+
+    # ---------------------------------------------------------------
+    # INFLAÇÃO
+    # ---------------------------------------------------------------
+    "CPIAUCSL": "CPI",
+    "CPILFESL": "Core_CPI",
+    "PCEPI": "PCE",
+    "PCEPILFE": "Core_PCE",
+
+    # ---------------------------------------------------------------
+    # ATIVIDADE ECONÔMICA
+    # ---------------------------------------------------------------
+    "GDPC1": "Real_GDP",
+    "INDPRO": "Industrial_Production",
+    "HOUST": "Housing_Starts",
+    "RSAFS": "Retail_Sales",
+
+    # Indicador antecedente
+    "USSLIND": "Leading_Index",
+
+    # ---------------------------------------------------------------
+    # MERCADO DE TRABALHO
+    # ---------------------------------------------------------------
+    "UNRATE": "Unemployment_Rate",
+    "PAYEMS": "Nonfarm_Payrolls",
+    "ICSA": "Initial_Jobless_Claims",
+
+    # ---------------------------------------------------------------
+    # CRÉDITO
+    # ---------------------------------------------------------------
+    "BAMLH0A0HYM2": "HY_Spread_Pct",
+    "BAMLC0A0CM": "IG_Spread_Pct",
+
+    # ---------------------------------------------------------------
+    # CONDIÇÕES FINANCEIRAS
+    # ---------------------------------------------------------------
+    "NFCI": "Chicago_Financial_Conditions",
+
+    # ---------------------------------------------------------------
+    # MERCADO DE AÇÕES
+    # ---------------------------------------------------------------
+    "SP500": "SP500",
+    "NASDAQCOM": "NASDAQ",
+
+    # ---------------------------------------------------------------
+    # VOLATILIDADE
+    # ---------------------------------------------------------------
+    "VIXCLS": "VIX",
+
+    # ---------------------------------------------------------------
+    # DÓLAR
+    # ---------------------------------------------------------------
+    "DTWEXBGS": "Dollar_Broad_Index",
+    "DEXUSEU": "Dollar_Euro",
+    "DEXJPUS": "Dollar_Yen",
+
+    # ---------------------------------------------------------------
+    # COMMODITIES
+    # ---------------------------------------------------------------
+    "DCOILWTICO": "WTI_Oil",
+
+    # Preço do ouro em USD/oz.
+    "GOLDAMGBD228NLBM": "Gold_USD",
+
+    # ---------------------------------------------------------------
+    # CRIPTO
+    # ---------------------------------------------------------------
+    "CBBTCUSD": "Bitcoin_USD",
+}
+
+
+# =====================================================================
+# 4. COLETA DOS DADOS DO FRED
+# =====================================================================
+
+def fetch_macro_data(api_key: str, lookback_years: int = LOOKBACK_YEARS) -> pd.DataFrame:
+
+    if not api_key:
+        raise ValueError("FRED_API_KEY não encontrada.")
+
     fred = Fred(api_key=api_key.strip())
-    start_date = (datetime.today() - timedelta(days=365 * lookback_years)).strftime('%Y-%m-%d')
-    
-    series_map = {
-        'WALCL': 'Fed_Total_Assets_M',
-        'WTREGEN': 'TGA_Balance_M',
-        'RRPONTSYD': 'ON_RRP_B',
-        'BAMLH0A0HYM2': 'HY_Spread_Pct',
-        'BAMLC0A0CM': 'IG_Spread_Pct',
-        'T10Y2Y': 'Yield_Curve_10Y2Y',
-        'DFII10': 'Real_Yield_10Y_TIPS',
-        'FEDFUNDS': 'Fed_Funds_Rate'
-    }
-    
+
+    start_date = (
+        datetime.today() - timedelta(days=365 * lookback_years)
+    ).strftime("%Y-%m-%d")
+
     data = {}
-    print("Coletando séries temporais do FRED...")
-    for series_id, col_name in series_map.items():
+
+    print("\nColetando séries temporais do FRED...\n")
+
+    for series_id, col_name in SERIES_MAP.items():
+
         try:
-            s = fred.get_series(series_id, observation_start=start_date)
-            data[col_name] = s
-            print(f"  [✓] Coletado: {series_id} -> {col_name}")
+
+            series = fred.get_series(
+                series_id,
+                observation_start=start_date
+            )
+
+            if series is not None and len(series) > 0:
+
+                series = pd.Series(series)
+                series.index = pd.to_datetime(series.index)
+                series = pd.to_numeric(series, errors="coerce")
+                series = series.dropna()
+
+                data[col_name] = series
+
+                print(
+                    f"  [✓] {series_id:<20} -> {col_name}"
+                )
+
+            else:
+
+                print(
+                    f"  [!] {series_id:<20} -> sem dados"
+                )
+
         except Exception as e:
-            print(f"  [✗] Erro ao coletar {series_id}: {e}")
-            
-    df = pd.DataFrame(data).ffill().dropna(how='all')
+
+            print(
+                f"  [✗] {series_id:<20} -> erro: {e}"
+            )
+
+    if not data:
+        raise RuntimeError("Nenhuma série foi coletada do FRED.")
+
+    df = pd.DataFrame(data)
+
+    df.index = pd.to_datetime(df.index)
+    df = df.sort_index()
+
+    # Normaliza para frequência diária.
+    # O forward fill permite comparar séries com frequências diferentes.
+    df = df.resample("D").last().ffill()
+
     return df
 
-def process_liquidity_and_metrics(df: pd.DataFrame) -> pd.DataFrame:
+
+# =====================================================================
+# 5. FUNÇÕES AUXILIARES
+# =====================================================================
+
+def get_value_at_date(df: pd.DataFrame, column: str, days_ago: int):
+    """
+    Retorna o valor mais próximo disponível até determinada data.
+    """
+
+    if column not in df.columns:
+        return np.nan
+
+    target_date = df.index[-1] - pd.Timedelta(days=days_ago)
+
+    series = df[column].dropna()
+
+    if series.empty:
+        return np.nan
+
+    available = series.loc[:target_date]
+
+    if available.empty:
+        return np.nan
+
+    return available.iloc[-1]
+
+
+def calculate_zscore(series: pd.Series, window_days: int = 504):
+    """
+    Z-score utilizando aproximadamente 2 anos de dados diários.
+    """
+
+    series = series.dropna()
+
+    if len(series) < 30:
+        return pd.Series(index=series.index, dtype=float)
+
+    rolling_mean = series.rolling(
+        window=window_days,
+        min_periods=30
+    ).mean()
+
+    rolling_std = series.rolling(
+        window=window_days,
+        min_periods=30
+    ).std()
+
+    zscore = (series - rolling_mean) / rolling_std
+
+    return zscore
+
+
+def format_number(value, decimals=2):
+
+    if pd.isna(value):
+        return "N/D"
+
+    return f"{value:,.{decimals}f}"
+
+
+def format_change(current, previous, decimals=2):
+
+    if pd.isna(current) or pd.isna(previous):
+        return "N/D"
+
+    change = current - previous
+
+    return f"{change:+,.{decimals}f}"
+
+
+def determine_direction(current, previous):
+
+    if pd.isna(current) or pd.isna(previous):
+        return "N/D"
+
+    if current > previous:
+        return "SUBINDO"
+
+    if current < previous:
+        return "CAINDO"
+
+    return "ESTÁVEL"
+
+
+# =====================================================================
+# 6. PROCESSAMENTO DOS INDICADORES
+# =====================================================================
+
+def process_macro_data(df: pd.DataFrame) -> pd.DataFrame:
+
     df = df.copy()
-    fed_assets_b = df['Fed_Total_Assets_M'] / 1000.0
-    tga_b = df['TGA_Balance_M'] / 1000.0
-    rrp_b = df['ON_RRP_B']
-    
-    df['Net_Liquidity_B'] = fed_assets_b - tga_b - rrp_b
-    df['Net_Liquidity_30D_Change_B'] = df['Net_Liquidity_B'].diff(periods=30)
-    
-    hy_mean = df['HY_Spread_Pct'].mean()
-    hy_std = df['HY_Spread_Pct'].std()
-    df['HY_Spread_ZScore'] = (df['HY_Spread_Pct'] - hy_mean) / hy_std
-    
+
+    # ---------------------------------------------------------------
+    # LIQUIDEZ
+    # ---------------------------------------------------------------
+
+    if all(
+        c in df.columns
+        for c in [
+            "Fed_Total_Assets_M",
+            "TGA_Balance_M",
+            "ON_RRP_B"
+        ]
+    ):
+
+        fed_assets_b = df["Fed_Total_Assets_M"] / 1000.0
+        tga_b = df["TGA_Balance_M"] / 1000.0
+        rrp_b = df["ON_RRP_B"]
+
+        df["Net_Liquidity_B"] = (
+            fed_assets_b
+            - tga_b
+            - rrp_b
+        )
+
+        df["Net_Liquidity_30D_Change_B"] = (
+            df["Net_Liquidity_B"]
+            - df["Net_Liquidity_B"].shift(30)
+        )
+
+        df["Net_Liquidity_90D_Change_B"] = (
+            df["Net_Liquidity_B"]
+            - df["Net_Liquidity_B"].shift(90)
+        )
+
+    # ---------------------------------------------------------------
+    # CRÉDITO — Z-SCORE
+    # ---------------------------------------------------------------
+
+    if "HY_Spread_Pct" in df.columns:
+
+        df["HY_Spread_ZScore"] = calculate_zscore(
+            df["HY_Spread_Pct"]
+        )
+
+    if "IG_Spread_Pct" in df.columns:
+
+        df["IG_Spread_ZScore"] = calculate_zscore(
+            df["IG_Spread_Pct"]
+        )
+
+    # ---------------------------------------------------------------
+    # CURVA
+    # ---------------------------------------------------------------
+
+    if (
+        "Yield_10Y" in df.columns
+        and "Yield_2Y" in df.columns
+    ):
+
+        df["Yield_Curve_10Y2Y_Calc"] = (
+            df["Yield_10Y"]
+            - df["Yield_2Y"]
+        )
+
+    if (
+        "Yield_10Y" in df.columns
+        and "Yield_3M" in df.columns
+    ):
+
+        df["Yield_Curve_10Y3M_Calc"] = (
+            df["Yield_10Y"]
+            - df["Yield_3M"]
+        )
+
+    # ---------------------------------------------------------------
+    # JUROS REAIS
+    # ---------------------------------------------------------------
+
+    if (
+        "Yield_10Y" in df.columns
+        and "Real_Yield_10Y" in df.columns
+    ):
+
+        df["Nominal_Real_Spread_10Y"] = (
+            df["Yield_10Y"]
+            - df["Real_Yield_10Y"]
+        )
+
     return df
+
+
+# =====================================================================
+# 7. GERAÇÃO DO PAYLOAD PARA O GEMINI
+# =====================================================================
 
 def generate_agent_prompt_payload(df: pd.DataFrame) -> str:
-    latest = df.iloc[-1]
-    prev_month = df.iloc[-30] if len(df) >= 30 else df.iloc[0]
-    
-    payload = f"""
-====================================================================
-DADOS MACROECONÔMICOS CONSOLIDADOS (FRED) - {datetime.today().strftime('%Y-%m-%d')}
-====================================================================
 
-1. LIQUIDEZ LÍQUIDA DO FED:
-   - Ativos Totais (Fed Balance Sheet): ${latest['Fed_Total_Assets_M']/1000:,.2f} Tri
-   - Conta Geral do Tesouro (TGA):      ${latest['TGA_Balance_M']/1000:,.2f} Tri
-   - Reverse Repo (RRP Overnight):      ${latest['ON_RRP_B']:,.2f} B
-   -----------------------------------------------------------------
-   - LIQUIDEZ LÍQUIDA ATUAL:            ${latest['Net_Liquidity_B']:,.2f} B
-   - Variação em 30 Dias:              ${latest['Net_Liquidity_30D_Change_B']:+,.2f} B
-   - Tendência de Liquidez:            {"EXPANSÃO (Apetite a Risco)" if latest['Net_Liquidity_30D_Change_B'] > 0 else "CONTRAÇÃO (Cautela/Risk-Off)"}
+    latest_date = df.index[-1]
 
-2. SPREADS DE CRÉDITO E ESTRESSE FINANCEIRO:
-   - High Yield Option-Adjusted Spread: {latest['HY_Spread_Pct']:.2f}% (Há 30 dias: {prev_month['HY_Spread_Pct']:.2f}%)
-   - Investment Grade Spread:          {latest['IG_Spread_Pct']:.2f}%
-   - Z-Score Estresse High Yield:       {latest['HY_Spread_ZScore']:+.2f} ({'Estresse Elevado' if latest['HY_Spread_ZScore'] > 1 else 'Nível Normal'})
+    sections = []
 
-3. ESTRUTURA DE JUROS EUA:
-   - Fed Funds Rate:                   {latest['Fed_Funds_Rate']:.2f}%
-   - Curva 10Y - 2Y:                    {latest['Yield_Curve_10Y2Y']:+.2f}% ({'Invertida' if latest['Yield_Curve_10Y2Y'] < 0 else 'Normal/Desinvertida'})
-   - Yield Real 10Y (TIPS):             {latest['Real_Yield_10Y_TIPS']:.2f}%
-====================================================================
-"""
-    return payload
+    sections.append(
+        "=" * 72
+    )
+
+    sections.append(
+        f"DADOS MACROECONÔMICOS CONSOLIDADOS — FRED\n"
+        f"Data de referência: {latest_date.strftime('%Y-%m-%d')}"
+    )
+
+    sections.append(
+        "=" * 72
+    )
+
+    # ---------------------------------------------------------------
+    # Função interna para montar blocos
+    # ---------------------------------------------------------------
+
+    def add_indicator(
+        name,
+        current_col,
+        unit="",
+        days=(30, 90, 365),
+        decimals=2,
+        zscore_col=None
+    ):
+
+        if current_col not in df.columns:
+            return
+
+        current = df[current_col].iloc[-1]
+
+        values = []
+
+        for d in days:
+            previous = get_value_at_date(
+                df,
+                current_col,
+                d
+            )
+
+            change = (
+                current - previous
+                if not pd.isna(previous)
+                else np.nan
+            )
+
+            values.append(
+                f"{d}D={format_change(change, 0, decimals)}"
+            )
+
+        direction_30 = determine_direction(
+            current,
+            get_value_at_date(
+                df,
+                current_col,
+                30
+            )
+        )
+
+        line = (
+            f"- {name}: "
+            f"{format_number(current, decimals)}{unit} | "
+            f"{' | '.join(values)} | "
+            f"Direção 30D: {direction_30}"
+        )
+
+        if zscore_col and zscore_col in df.columns:
+
+            zscore = df[zscore_col].iloc[-1]
+
+            if not pd.isna(zscore):
+
+                line += (
+                    f" | Z-score: {zscore:+.2f}"
+                )
+
+        sections.append(line)
+
+    # ---------------------------------------------------------------
+    # 1. LIQUIDEZ
+    # ---------------------------------------------------------------
+
+    sections.append("\n1. LIQUIDEZ DO SISTEMA FINANCEIRO")
+    sections.append("-" * 72)
+
+    add_indicator(
+        "Fed Total Assets",
+        "Fed_Total_Assets_M",
+        " M",
+        decimals=0
+    )
+
+    add_indicator(
+        "TGA",
+        "TGA_Balance_M",
+        " M",
+        decimals=0
+    )
+
+    add_indicator(
+        "ON RRP",
+        "ON_RRP_B",
+        " B",
+        decimals=2
+    )
+
+    add_indicator(
+        "Reservas Bancárias",
+        "Bank_Reserves_M",
+        " M",
+        decimals=0
+    )
+
+    add_indicator(
+        "M2",
+        "M2_B",
+        " B",
+        decimals=0
+    )
+
+    add_indicator(
+        "Liquidez Líquida Fed - TGA - RRP",
+        "Net_Liquidity_B",
+        " B",
+        decimals=2
+    )
+
+    add_indicator(
+        "Variação Liquidez Líquida",
+        "Net_Liquidity_30D_Change_B",
+        " B",
+        decimals=2
+    )
+
+    # ---------------------------------------------------------------
+    # 2. POLÍTICA MONETÁRIA
+    # ---------------------------------------------------------------
+
+    sections.append("\n2. POLÍTICA MONETÁRIA")
+    sections.append("-" * 72)
+
+    add_indicator(
+        "Fed Funds",
+        "Fed_Funds_Rate",
+        "%",
+        decimals=2
+    )
+
+    add_indicator(
+        "Effective Fed Funds",
+        "Effective_Fed_Funds_Rate",
+        "%",
+        decimals=2
+    )
+
+    # ---------------------------------------------------------------
+    # 3. CURVA DE JUROS
+    # ---------------------------------------------------------------
+
+    sections.append("\n3. CURVA DE JUROS")
+    sections.append("-" * 72)
+
+    add_indicator(
+        "Treasury 3M",
+        "Yield_3M",
+        "%",
+        decimals=2
+    )
+
+    add_indicator(
+        "Treasury 2Y",
+        "Yield_2Y",
+        "%",
+        decimals=2
+    )
+
+    add_indicator(
+        "Treasury 5Y",
+        "Yield_5Y",
+        "%",
+        decimals=2
+    )
+
+    add_indicator(
+        "Treasury 10Y",
+        "Yield_10Y",
+        "%",
+        decimals=2
+    )
+
+    add_indicator(
+        "Treasury 30Y",
+        "Yield_30Y",
+        "%",
+        decimals=2
+    )
+
+    add_indicator(
+        "Curva 10Y-2Y",
+        "Yield_Curve_10Y2Y",
+        "%",
+        decimals=2
+    )
+
+    add_indicator(
+        "Curva 10Y-3M",
+        "Yield_Curve_10Y3M",
+        "%",
+        decimals=2
+    )
+
+    add_indicator(
+        "Juro Real 5Y",
+        "Real_Yield_5Y",
+        "%",
+        decimals=2
+    )
+
+    add_indicator(
+        "Juro Real 10Y",
+        "Real_Yield_10Y",
+        "%",
+        decimals=2
+    )
+
+    add_indicator(
+        "Juro Real 30Y",
+        "Real_Yield_30Y",
+        "%",
+        decimals=2
+    )
+
+    add_indicator(
+        "Breakeven 5Y",
+        "Breakeven_Inflation_5Y",
+        "%",
+        decimals=2
+    )
+
+    add_indicator(
+        "Breakeven 10Y",
+        "Breakeven_Inflation_10Y",
+        "%",
+        decimals=2
+    )
+
+    # ---------------------------------------------------------------
+    # 4. INFLAÇÃO
+    # ---------------------------------------------------------------
+
+    sections.append("\n4. INFLAÇÃO")
+    sections.append("-" * 72)
+
+    add_indicator(
+        "CPI",
+        "CPI",
+        "",
+        decimals=2
+    )
+
+    add_indicator(
+        "Core CPI",
+        "Core_CPI",
+        "",
+        decimals=2
+    )
+
+    add_indicator(
+        "PCE",
+        "PCE",
+        "",
+        decimals=2
+    )
+
+    add_indicator(
+        "Core PCE",
+        "Core_PCE",
+        "",
+        decimals=2
+    )
+
+    # ---------------------------------------------------------------
+    # 5. CICLO ECONÔMICO
+    # ---------------------------------------------------------------
+
+    sections.append("\n5. CICLO ECONÔMICO")
+    sections.append("-" * 72)
+
+    add_indicator(
+        "PIB Real",
+        "Real_GDP",
+        "",
+        decimals=2
+    )
+
+    add_indicator(
+        "Produção Industrial",
+        "Industrial_Production",
+        "",
+        decimals=2
+    )
+
+    add_indicator(
+        "Housing Starts",
+        "Housing_Starts",
+        "",
+        decimals=0
+    )
+
+    add_indicator(
+        "Retail Sales",
+        "Retail_Sales",
+        "",
+        decimals=2
+    )
+
+    add_indicator(
+        "Leading Index",
+        "Leading_Index",
+        "",
+        decimals=2
+    )
+
+    # ---------------------------------------------------------------
+    # 6. MERCADO DE TRABALHO
+    # ---------------------------------------------------------------
+
+    sections.append("\n6. MERCADO DE TRABALHO")
+    sections.append("-" * 72)
+
+    add_indicator(
+        "Desemprego",
+        "Unemployment_Rate",
+        "%",
+        decimals=2
+    )
+
+    add_indicator(
+        "Nonfarm Payrolls",
+        "Nonfarm_Payrolls",
+        " mil",
+        decimals=0
+    )
+
+    add_indicator(
+        "Initial Jobless Claims",
+        "Initial_Jobless_Claims",
+        "",
+        decimals=0
+    )
+
+    # ---------------------------------------------------------------
+    # 7. CRÉDITO
+    # ---------------------------------------------------------------
+
+    sections.append("\n7. CRÉDITO")
+    sections.append("-" * 72)
+
+    add_indicator(
+        "High Yield Spread",
+        "HY_Spread_Pct",
+        "%",
+        decimals=2,
+        zscore_col="HY_Spread_ZScore"
+    )
+
+    add_indicator(
+        "Investment Grade Spread",
+        "IG_Spread_Pct",
+        "%",
+        decimals=2,
+        zscore_col="IG_Spread_ZScore"
+    )
+
+    # ---------------------------------------------------------------
+    # 8. CONDIÇÕES FINANCEIRAS
+    # ---------------------------------------------------------------
+
+    sections.append("\n8. CONDIÇÕES FINANCEIRAS")
+    sections.append("-" * 72)
+
+    add_indicator(
+        "Chicago Fed NFCI",
+        "Chicago_Financial_Conditions",
+        "",
+        decimals=3
+    )
+
+    # ---------------------------------------------------------------
+    # 9. MERCADO DE AÇÕES
+    # ---------------------------------------------------------------
+
+    sections.append("\n9. MERCADOS DE AÇÕES")
+    sections.append("-" * 72)
+
+    add_indicator(
+        "S&P 500",
+        "SP500",
+        "",
+        decimals=2
+    )
+
+    add_indicator(
+        "NASDAQ",
+        "NASDAQ",
+        "",
+        decimals=2
+    )
+
+    # ---------------------------------------------------------------
+    # 10. VOLATILIDADE
+    # ---------------------------------------------------------------
+
+    sections.append("\n10. VOLATILIDADE")
+    sections.append("-" * 72)
+
+    add_indicator(
+        "VIX",
+        "VIX",
+        "",
+        decimals=2
+    )
+
+    # ---------------------------------------------------------------
+    # 11. DÓLAR
+    # ---------------------------------------------------------------
+
+    sections.append("\n11. DÓLAR")
+    sections.append("-" * 72)
+
+    add_indicator(
+        "Dollar Broad Index",
+        "Dollar_Broad_Index",
+        "",
+        decimals=2
+    )
+
+    add_indicator(
+        "USD/EUR",
+        "Dollar_Euro",
+        "",
+        decimals=4
+    )
+
+    add_indicator(
+        "USD/JPY",
+        "Dollar_Yen",
+        "",
+        decimals=2
+    )
+
+    # ---------------------------------------------------------------
+    # 12. COMMODITIES
+    # ---------------------------------------------------------------
+
+    sections.append("\n12. COMMODITIES")
+    sections.append("-" * 72)
+
+    add_indicator(
+        "WTI",
+        "WTI_Oil",
+        " USD",
+        decimals=2
+    )
+
+    add_indicator(
+        "Ouro",
+        "Gold_USD",
+        " USD",
+        decimals=2
+    )
+
+    # ---------------------------------------------------------------
+    # 13. CRIPTO
+    # ---------------------------------------------------------------
+
+    sections.append("\n13. CRIPTO")
+    sections.append("-" * 72)
+
+    add_indicator(
+        "Bitcoin",
+        "Bitcoin_USD",
+        " USD",
+        decimals=2
+    )
+
+    sections.append("\n" + "=" * 72)
+
+    sections.append(
+        "INSTRUÇÃO: Utilize somente os dados efetivamente fornecidos acima. "
+        "Não invente valores ausentes. Quando uma série estiver indisponível, "
+        "indique N/D ou EVIDÊNCIA INSUFICIENTE."
+    )
+
+    sections.append("=" * 72)
+
+    return "\n".join(sections)
+
 
 # =====================================================================
-# 3. ANÁLISE COM GEMINI COM RETRY E FALLBACK AUTOMÁTICO
+# 8. SYSTEM INSTRUCTION — ANALISTA MACROESTRATÉGICO
 # =====================================================================
+
 SYSTEM_INSTRUCTION = """
-PROMPT_MACRO = """
-Você é um Analista MacroEstratégico Sênior, especializado em macroeconomia, ciclos econômicos, liquidez global e interação entre política monetária, crédito, juros e preços dos ativos.
+Você é um Analista MacroEstratégico Sênior, especializado em macroeconomia,
+ciclos econômicos, liquidez global e interação entre política monetária,
+crédito, juros e preços dos ativos.
 
-Seu objetivo é produzir uma análise macroeconômica orientada à tomada de decisão de um investidor de perfil arrojado, evitando previsões categóricas e separando claramente dados, interpretação e hipóteses.
+Seu objetivo é produzir uma análise macroeconômica orientada à tomada de
+decisão de um investidor de perfil arrojado, evitando previsões categóricas
+e separando claramente dados, interpretação e hipóteses.
 
-## 1. PRINCÍPIOS DA ANÁLISE
+IMPORTANTE:
+- Utilize somente os dados efetivamente fornecidos no payload.
+- Não invente valores, séries ou acontecimentos.
+- Quando um dado necessário não estiver disponível, escreva "N/D" ou
+  "EVIDÊNCIA INSUFICIENTE".
+- Não trate uma única variável como determinante do cenário.
+- Diferencie fato, interpretação e hipótese.
+- Não faça previsões categóricas.
+- Priorize mudanças de regime, momentum, divergências e assimetrias.
+
+============================================================
+1. PRINCÍPIOS DA ANÁLISE
+============================================================
 
 - Seja direto, técnico e objetivo.
 - Priorize mudanças de regime, assimetrias e relações de causa e efeito.
-- Não se limite ao nível atual dos indicadores: analise também sua direção, velocidade de mudança e posição histórica.
+- Analise nível, direção, velocidade de mudança e posição histórica.
 - Diferencie indicadores leading, coincident e lagging.
-- Sempre informe a data de referência dos dados.
-- Não trate uma única variável como determinante do cenário.
-- Quando os indicadores forem conflitantes, destaque explicitamente a divergência.
-- Diferencie claramente fato, interpretação e hipótese.
-- Não faça previsões categóricas. Trabalhe com cenários, probabilidades qualitativas e gatilhos de mudança.
-- Dê maior peso a mudanças recentes de tendência do que a fotografias isoladas dos indicadores.
-- Quando possível, compare os dados atuais com médias históricas e episódios semelhantes.
+- Sempre considere a data de referência dos dados.
+- Dê maior peso a mudanças persistentes e confirmadas por diferentes
+  classes de indicadores.
+- Quando os indicadores forem conflitantes, destaque explicitamente
+  a divergência.
+- Não confunda correlação com causalidade.
+- Não transforme uma divergência automaticamente em previsão de reversão.
 
-## 2. HIERARQUIA DA ANÁLISE
-
-### A. REGIME MACROECONÔMICO
+============================================================
+2. REGIME MACROECONÔMICO
+============================================================
 
 Determine qual regime melhor descreve o ambiente atual:
 
@@ -139,59 +984,66 @@ Explique:
 
 Não classifique o regime com base em um único indicador.
 
-### B. POLÍTICA MONETÁRIA
+============================================================
+3. POLÍTICA MONETÁRIA
+============================================================
 
 Analise:
 
-- Federal Funds Rate;
-- Fed Funds efetivo;
-- expectativas para a política monetária;
-- taxa de juros real;
-- inflação corrente;
+- Federal Funds;
+- Effective Fed Funds;
+- juros reais;
+- inflação;
 - expectativas de inflação;
 - condições financeiras;
-- postura monetária em relação ao crescimento e à inflação.
+- relação entre crescimento e política monetária.
 
 Diferencie:
 
 POLÍTICA MONETÁRIA EFETIVA
 
-da
+de
 
 POLÍTICA MONETÁRIA ESPERADA PELO MERCADO.
 
-Identifique eventuais divergências entre o que o Fed sinaliza, o que os dados econômicos sugerem e o que o mercado está precificando.
+Identifique divergências entre dados econômicos, política monetária e
+precificação dos ativos.
 
-### C. LIQUIDEZ
+============================================================
+4. LIQUIDEZ
+============================================================
 
-Analise a liquidez do sistema financeiro, evitando tratar simplesmente o balanço do Fed como sinônimo de liquidez.
+Analise:
 
-Considere, quando disponíveis:
-
-- balanço do Federal Reserve;
-- reservas bancárias;
-- Treasury General Account (TGA);
+- balanço do Fed;
+- TGA;
 - ON RRP;
-- QT/QE;
-- operações de repo;
+- reservas bancárias;
 - M2;
+- liquidez líquida calculada;
+- variação da liquidez;
 - condições financeiras;
 - dólar.
 
-Explique se a liquidez está:
+Não trate simplesmente o balanço do Fed como sinônimo de liquidez.
+
+Determine se a liquidez está:
 
 EXPANDINDO / NEUTRA / CONTRAINDO
 
-e, principalmente:
+Analise:
 
-- se a mudança está acelerando ou desacelerando;
-- quais componentes estão provocando a mudança;
-- se a liquidez está efetivamente chegando aos mercados de risco;
-- se existe defasagem entre mudança de liquidez e reação dos ativos.
+- velocidade da mudança;
+- aceleração ou desaceleração;
+- componentes responsáveis;
+- possível impacto sobre ativos de risco.
 
-Diferencie liquidez do Fed, liquidez do sistema financeiro e liquidez percebida pelos mercados de risco, quando os dados permitirem.
+Diferencie liquidez do Fed, liquidez bancária e liquidez percebida
+pelos mercados de risco.
 
-### D. CURVA DE JUROS
+============================================================
+5. CURVA DE JUROS
+============================================================
 
 Analise:
 
@@ -200,10 +1052,10 @@ Analise:
 - 5Y;
 - 10Y;
 - 30Y;
-- 2s10s;
-- 3m10y;
-- real yields;
-- breakevens de inflação.
+- 10Y-2Y;
+- 10Y-3M;
+- juros reais;
+- breakevens.
 
 Identifique se os movimentos são predominantemente explicados por:
 
@@ -214,65 +1066,57 @@ Identifique se os movimentos são predominantemente explicados por:
 - risco fiscal;
 - demanda por ativos seguros.
 
-Diferencie:
+Diferencie movimentos da parte curta e da parte longa da curva.
 
-movimento da parte curta da curva
+============================================================
+6. CRÉDITO
+============================================================
 
-de
+Analise:
 
-movimento da parte longa da curva.
-
-Quando possível, avalie se o movimento dos juros reais ou das expectativas de inflação está sendo o principal responsável pela alteração das taxas nominais.
-
-### E. CRÉDITO
-
-Analise separadamente:
-
-- Investment Grade;
 - High Yield;
+- Investment Grade;
 - spreads;
-- condições de financiamento;
-- inadimplência, quando disponível;
-- condições de concessão de crédito.
+- variações recentes;
+- Z-score;
+- condições financeiras.
 
-Para os principais spreads, informe:
+Para os spreads, considere:
 
-NÍVEL ATUAL + VARIAÇÃO RECENTE + POSIÇÃO HISTÓRICA/Z-SCORE + DIREÇÃO.
+NÍVEL + DIREÇÃO + MOMENTUM + POSIÇÃO HISTÓRICA.
 
-Dê atenção especial a mudanças rápidas nos spreads, mesmo quando o nível absoluto ainda parecer benigno.
+Dê atenção especial a mudanças rápidas nos spreads.
 
-Avalie se o mercado de crédito está:
+Avalie se o crédito está:
 
 CONFIRMANDO ou CONTRADIZENDO o cenário macroeconômico.
 
-### F. CICLO ECONÔMICO
+============================================================
+7. CICLO ECONÔMICO
+============================================================
 
 Analise:
 
 - PIB;
-- atividade;
-- mercado de trabalho;
-- desemprego;
-- pedidos de seguro-desemprego;
-- emprego;
-- consumo;
 - produção industrial;
 - housing;
-- indicadores antecedentes.
+- retail sales;
+- leading indicators;
+- desemprego;
+- payrolls;
+- jobless claims.
 
-Identifique se o crescimento está:
+Determine se o crescimento está:
 
 ACELERANDO / ESTÁVEL / DESACELERANDO.
 
-Diferencie:
+Diferencie indicadores antecedentes, contemporâneos e atrasados.
 
-- dados antecedentes;
-- dados contemporâneos;
-- dados atrasados.
+Dê atenção especial ao momentum.
 
-Dê atenção especial às mudanças de momentum.
-
-### G. INFLAÇÃO
+============================================================
+8. INFLAÇÃO
+============================================================
 
 Analise:
 
@@ -280,56 +1124,37 @@ Analise:
 - Core CPI;
 - PCE;
 - Core PCE;
-- salários;
-- inflação de serviços;
-- inflação de bens;
-- expectativas de inflação;
-- breakevens.
+- breakevens;
+- juros reais.
 
-Diferencie inflação:
+Diferencie:
 
-PERSISTENTE × TRANSITÓRIA
+PERSISTENTE × TRANSITÓRIA.
 
-e avalie se a trajetória é compatível com:
+Avalie se a trajetória é compatível com política monetária:
 
-- política monetária mais restritiva;
-- política monetária neutra;
-- política monetária mais expansionista.
+RESTRITIVA / NEUTRA / EXPANSIONISTA.
 
-Identifique também se a desinflação, quando existente, está ocorrendo de forma ampla ou concentrada em poucos componentes.
+============================================================
+9. CONFIRMAÇÃO PELOS MERCADOS
+============================================================
 
-## 3. CONFIRMAÇÃO PELOS MERCADOS
-
-Verifique se o comportamento dos mercados confirma ou contradiz o cenário macroeconômico.
-
-Analise, quando houver dados disponíveis:
+Compare o cenário macro com:
 
 - S&P 500;
-- Nasdaq;
-- small caps;
+- NASDAQ;
 - Treasury;
 - dólar;
 - ouro;
-- commodities;
+- petróleo;
 - crédito;
 - VIX;
-- Bitcoin/cripto.
+- Bitcoin.
 
-Procure principalmente divergências entre fundamentos macroeconômicos e preços dos ativos.
+Procure principalmente divergências entre fundamentos macroeconômicos
+e preços dos ativos.
 
-Exemplo:
-
-CRESCIMENTO: desacelerando
-CRÉDITO: benigno
-BOLSA: forte
-VOLATILIDADE: baixa
-
-INTERPRETAÇÃO:
-Os mercados ainda não confirmam a deterioração macro.
-
-Não conclua automaticamente que uma divergência significa reversão iminente.
-
-Avalie se o comportamento dos preços pode ser explicado por:
+Considere possíveis explicações:
 
 - liquidez;
 - posicionamento;
@@ -339,107 +1164,91 @@ Avalie se o comportamento dos preços pode ser explicado por:
 - fatores técnicos;
 - fatores específicos do ativo.
 
-## 4. DIVERGÊNCIAS MACRO × MERCADO
+============================================================
+10. DIVERGÊNCIAS MACRO × MERCADO
+============================================================
 
-Identifique explicitamente situações em que diferentes blocos de indicadores apresentam sinais conflitantes.
+Esta é uma seção prioritária.
+
+Identifique situações em que diferentes blocos de indicadores apresentam
+sinais conflitantes.
 
 Procure divergências entre:
 
-- MACROECONOMIA: crescimento, emprego e atividade;
-- INFLAÇÃO: trajetória dos preços e expectativas;
-- POLÍTICA MONETÁRIA: Fed e expectativas de juros;
-- LIQUIDEZ: condições de liquidez do sistema;
-- CRÉDITO: spreads e condições financeiras;
-- JUROS: curva nominal e real;
-- BOLSA: ações e valuation, quando disponível;
-- VOLATILIDADE: VIX e demais indicadores disponíveis;
-- DÓLAR: direção e condições financeiras;
-- OURO/COMMODITIES: confirmação ou divergência em relação ao ciclo;
-- CRIPTO: comportamento relativo à liquidez e ao apetite por risco.
+- MACROECONOMIA;
+- INFLAÇÃO;
+- POLÍTICA MONETÁRIA;
+- LIQUIDEZ;
+- CRÉDITO;
+- JUROS;
+- BOLSA;
+- VOLATILIDADE;
+- DÓLAR;
+- OURO/COMMODITIES;
+- CRIPTO.
 
-Para cada divergência relevante, apresente:
+Para cada divergência relevante:
 
 DIVERGÊNCIA #[n]
 
-MACRO: [sinal predominante]
-INFLAÇÃO: [sinal predominante]
-POLÍTICA MONETÁRIA: [sinal predominante]
-LIQUIDEZ: [sinal predominante]
-CRÉDITO: [sinal predominante]
-JUROS: [sinal predominante]
-BOLSA: [sinal predominante]
-VOLATILIDADE: [sinal predominante]
+MACRO: [sinal]
+INFLAÇÃO: [sinal]
+POLÍTICA MONETÁRIA: [sinal]
+LIQUIDEZ: [sinal]
+CRÉDITO: [sinal]
+JUROS: [sinal]
+BOLSA: [sinal]
+VOLATILIDADE: [sinal]
 
 INTERPRETAÇÃO:
-Explique objetivamente qual é a divergência e quais hipóteses podem explicar o comportamento aparentemente contraditório dos indicadores.
+Explique objetivamente a divergência e possíveis mecanismos que a expliquem.
 
 O QUE CONFIRMARIA A TESE:
-Indique quais dados ou movimentos de mercado deveriam ocorrer para confirmar a interpretação.
+Indique quais dados ou movimentos deveriam ocorrer.
 
 O QUE INVALIDARIA A TESE:
 Indique quais dados ou movimentos contrariariam a interpretação.
 
 IMPLICAÇÃO:
-Explique quais classes de ativos podem ser mais sensíveis à resolução dessa divergência.
+Indique quais classes de ativos podem ser mais sensíveis à resolução
+da divergência.
 
-Não trate a existência de uma divergência como evidência de que haverá necessariamente uma reversão dos preços.
-
-Uma divergência deve ser apresentada como sinal de atenção e possível assimetria, cuja importância depende de confirmação posterior.
+Não trate divergência como evidência automática de reversão.
 
 Priorize divergências que:
 
 1. estejam se ampliando;
-2. apresentem grande diferença em relação ao histórico;
-3. envolvam indicadores de natureza diferente;
+2. apresentem grande diferença histórica;
+3. envolvam diferentes tipos de indicadores;
 4. possam sinalizar mudança de regime;
-5. tenham potencial para produzir movimentos relevantes entre classes de ativos.
+5. possam gerar movimentos relevantes entre classes de ativos.
 
-Quando não houver divergências relevantes, declare:
+============================================================
+11. CENÁRIOS
+============================================================
 
-"Não foram identificadas divergências macro × mercado relevantes no período analisado."
+Construa:
 
-## 5. CENÁRIOS
+CENÁRIO-BASE
+CENÁRIO ALTISTA
+CENÁRIO BAIXISTA
 
-Construa três cenários:
-
-### CENÁRIO-BASE
+Para cada cenário, apresente:
 
 - dinâmica macro;
-- principais evidências;
-- ativos potencialmente favorecidos;
+- evidências;
 - principais riscos;
-- indicadores que confirmariam o cenário;
-- indicadores que poderiam invalidá-lo.
-
-### CENÁRIO ALTISTA
-
-Indique:
-
-- quais dados precisariam melhorar;
-- quais condições financeiras precisariam ocorrer;
-- quais ativos tenderiam a se beneficiar;
-- quais indicadores confirmariam esse cenário.
-
-### CENÁRIO BAIXISTA
-
-Indique:
-
-- quais dados precisariam piorar;
-- quais condições financeiras poderiam se deteriorar;
-- quais ativos tenderiam a sofrer;
-- quais indicadores confirmariam esse cenário.
-
-Para cada cenário, indique os gatilhos de confirmação ou invalidação.
+- ativos potencialmente favorecidos;
+- indicadores de confirmação;
+- indicadores de invalidação.
 
 Não atribua probabilidades numéricas sem base quantitativa suficiente.
 
-## 6. MATRIZ DE ATIVOS
+============================================================
+12. MATRIZ DE ATIVOS
+============================================================
 
-Para cada classe abaixo, apresente:
-
-Regime atual | Direção | Momentum | Risco | Assimetria | O que monitorar
-
-Classes:
+Analise:
 
 - Ações;
 - Treasury/Renda Fixa;
@@ -449,48 +1258,55 @@ Classes:
 - Dólar;
 - Cripto.
 
-Para Direção, use apenas:
+Para cada classe:
+
+Regime atual | Direção | Momentum | Risco | Assimetria | O que monitorar
+
+Para Direção utilize:
 
 POSITIVO / NEUTRO / NEGATIVO
 
-Não produza ranking entre as classes.
-
-Explique resumidamente o fundamento de cada classificação.
+Não produza ranking entre classes.
 
 Diferencie:
 
-tese estrutural
+TESE ESTRUTURAL
 
 de
 
-tese tática.
+TESE TÁTICA.
 
-## 7. IMPLICAÇÕES PARA O INVESTIDOR
+============================================================
+13. IMPLICAÇÕES PARA O INVESTIDOR
+============================================================
 
-Transforme a análise macro em implicações práticas, mas não pule diretamente dos dados para uma recomendação.
-
-Para cada classe de ativo, apresente:
+Para cada classe:
 
 1. O que favorece a exposição;
 2. O que ameaça a exposição;
 3. Qual evidência mudaria a tese;
-4. Qual horizonte temporal é relevante;
-5. Qual seria o principal risco de estar excessivamente exposto;
-6. Qual seria o principal risco de estar subexposto.
+4. Horizonte temporal relevante;
+5. Principal risco de excesso de exposição;
+6. Principal risco de subexposição.
 
-Quando houver uma possível oportunidade tática, descreva-a como:
+Não transforme automaticamente uma condição macro favorável em
+recomendação de compra ou uma condição desfavorável em recomendação
+de venda.
 
-"A assimetria favorece maior exposição caso X aconteça, especialmente se Y confirmar."
+Quando houver uma possível oportunidade tática, descreva:
+
+"A assimetria favorece maior exposição caso X aconteça,
+especialmente se Y confirmar."
 
 Quando houver risco:
 
 "O risco aumenta caso X aconteça e seja confirmado por Y."
 
-Não transforme automaticamente uma condição macro favorável em recomendação de compra ou uma condição desfavorável em recomendação de venda.
+============================================================
+14. ALERTAS DE MUDANÇA DE REGIME
+============================================================
 
-## 8. ALERTAS DE MUDANÇA DE REGIME
-
-Finalize identificando os 5 indicadores que mais merecem monitoramento nas próximas semanas.
+Identifique os 5 indicadores que mais merecem monitoramento.
 
 Para cada um:
 
@@ -499,47 +1315,37 @@ Para cada um:
 - data;
 - direção;
 - velocidade da mudança;
-- nível crítico ou mudança relevante a observar;
+- nível crítico ou mudança relevante;
 - por que importa;
-- qual classe de ativo seria mais afetada;
-- qual mudança nesse indicador alteraria a tese macro atual.
+- classe de ativo mais afetada;
+- qual mudança alteraria a tese atual.
 
-Priorize indicadores com capacidade de antecipar mudanças, e não apenas indicadores que confirmam algo que já aconteceu.
+============================================================
+15. QUALIDADE DOS DADOS
+============================================================
 
-## 9. QUALIDADE DOS DADOS E FONTES
-
-Priorize dados oficiais e fontes primárias, especialmente:
-
-- Federal Reserve;
-- FRED;
-- U.S. Treasury;
-- Bureau of Labor Statistics (BLS);
-- Bureau of Economic Analysis (BEA).
-
-Para cada dado importante, informe:
-
-INDICADOR | VALOR | DATA | VARIAÇÃO | INTERPRETAÇÃO
-
-Não misture dados de períodos diferentes sem deixar isso explícito.
-
-Quando houver revisão relevante de dados, destaque-a.
+Priorize dados oficiais e fontes primárias.
 
 Diferencie:
 
 - dado observado;
 - estimativa;
-- expectativa de mercado;
-- interpretação analítica.
+- expectativa;
+- interpretação.
 
-Se não houver dados suficientes para sustentar uma conclusão, diga explicitamente:
+Quando houver revisão relevante, destaque-a.
+
+Se não houver dados suficientes:
 
 "EVIDÊNCIA INSUFICIENTE."
 
 Não preencha lacunas com suposições.
 
-## 10. RESUMO EXECUTIVO
+============================================================
+16. RESUMO EXECUTIVO
+============================================================
 
-Comece a resposta sempre com:
+Comece sempre com:
 
 REGIME MACRO:
 [descrição em uma frase]
@@ -574,124 +1380,323 @@ PRINCIPAL DIVERGÊNCIA:
 INDICADOR MAIS IMPORTANTE A MONITORAR:
 [indicador + motivo]
 
-Depois apresente a análise detalhada seguindo a estrutura definida acima.
+============================================================
+17. DISCIPLINA ANALÍTICA
+============================================================
 
-## 11. DISCIPLINA ANALÍTICA
+Sempre que possível, utilize a sequência:
 
-Ao concluir a análise:
+DADO
+→ MECANISMO
+→ IMPACTO MACRO
+→ IMPACTO NOS ATIVOS
+→ O QUE CONFIRMARIA
+→ O QUE INVALIDARIA
 
-- Não confunda correlação com causalidade.
-- Não considere um indicador isolado como confirmação de uma tese.
-- Dê maior peso a movimentos persistentes e confirmados por diferentes classes de indicadores.
-- Destaque quando o mercado estiver antecipando uma mudança que ainda não aparece nos dados econômicos.
-- Destaque quando os dados econômicos estiverem mudando antes dos preços dos ativos.
-- Diferencie mudança de nível de mudança de tendência.
-- Diferencie volatilidade de curto prazo de mudança estrutural.
-- Identifique explicitamente quando a evidência estiver dividida.
-- Evite narrativas pós-fato.
-- Explique quais indicadores estavam disponíveis antes do movimento sempre que essa informação for relevante.
-- Sempre que possível, apresente a relação causal na forma:
+Destaque quando:
 
-DADO → MECANISMO → IMPACTO MACRO → IMPACTO NOS ATIVOS → O QUE CONFIRMARIA/INVALIDARIA
+- o mercado estiver antecipando uma mudança ainda não visível
+  nos dados econômicos;
+- os dados econômicos estiverem mudando antes dos preços;
+- houver mudança de nível sem mudança de tendência;
+- houver mudança de tendência;
+- houver divergência entre classes de ativos;
+- a evidência estiver dividida.
 
-O objetivo final é identificar mudanças de regime, divergências, assimetrias e riscos de cauda, produzindo uma análise que seja útil para o acompanhamento contínuo do ambiente macroeconômico e para o planejamento tático de exposição entre classes de ativos.
+O objetivo final é identificar:
+
+MUDANÇAS DE REGIME
+DIVERGÊNCIAS
+ASSIMETRIAS
+RISCOS DE CAUDA
+
+produzindo uma análise útil para acompanhamento contínuo do ambiente
+macroeconômico e planejamento tático de exposição entre classes de ativos.
 """
 
-USER_PROMPT = """
-Realize a análise macroeconômica mais recente.
 
-Data da análise: {data}
-
-Analise os dados disponíveis e compare-os, quando possível, com a análise anterior.
-
-Destaque especialmente:
-
-1. O que mudou desde a última análise;
-2. Mudanças de regime;
-3. Novas divergências macro × mercado;
-4. Alterações na liquidez;
-5. Alterações na curva de juros;
-6. Alterações nos spreads de crédito;
-7. Implicações para as principais classes de ativos;
-8. Os 5 indicadores que merecem maior atenção na próxima atualização.
-"""
+# =====================================================================
+# 9. ANÁLISE COM GEMINI
+# =====================================================================
 
 def analisar_macro_com_gemini(dados_fred_text: str) -> str:
-    api_key_limpa = GEMINI_API_KEY.strip().replace('"', '').replace("'", "")
-    client = genai.Client(api_key=api_key_limpa)
-    
-    # Modelos estáveis em ordem de prioridade para contingência
-    modelos_candidatos = ['gemini-3.6-flash', 'gemini-2.0-flash', 'gemini-1.5-flash']
-    
+
+    if not GEMINI_API_KEY:
+        raise ValueError("GEMINI_API_KEY não encontrada.")
+
+    api_key_limpa = (
+        GEMINI_API_KEY
+        .strip()
+        .replace('"', '')
+        .replace("'", "")
+    )
+
+    client = genai.Client(
+        api_key=api_key_limpa
+    )
+
+    modelos_candidatos = [
+        "gemini-3.6-flash",
+        "gemini-2.0-flash",
+        "gemini-1.5-flash"
+    ]
+
+    user_prompt = f"""
+Realize a análise macroestratégica utilizando os dados abaixo.
+
+Não utilize informações externas que não estejam presentes no payload.
+
+DADOS:
+
+{dados_fred_text}
+
+Compare especialmente:
+
+- situação atual;
+- mudança em 30 dias;
+- mudança em 90 dias;
+- mudança em 12 meses;
+- momentum;
+- divergências;
+- sinais de mudança de regime.
+
+Dê prioridade à seção DIVERGÊNCIAS MACRO × MERCADO.
+
+Ao final, produza o RESUMO EXECUTIVO e os 5 ALERTAS DE MUDANÇA DE REGIME
+solicitados nas instruções do sistema.
+"""
+
     for modelo in modelos_candidatos:
+
         for tentativa in range(1, 4):
+
             try:
-                print(f"Gerando análise com {modelo} (Tentativa {tentativa}/3)...")
+
+                print(
+                    f"\nGerando análise com {modelo} "
+                    f"(Tentativa {tentativa}/3)..."
+                )
+
                 response = client.models.generate_content(
+
                     model=modelo,
-                    contents=f"Aqui estão os dados atualizados do FRED para sua análise:\n\n{dados_fred_text}",
+
+                    contents=user_prompt,
+
                     config=types.GenerateContentConfig(
+
                         system_instruction=SYSTEM_INSTRUCTION,
+
                         temperature=0.2
                     )
                 )
+
                 if response.text:
+
                     return response.text
+
             except ServerError as e:
-                print(f"⚠️ Servidor sobrecarregado (503) no modelo {modelo}: {e.message}")
+
+                print(
+                    f"Servidor sobrecarregado (503) no modelo "
+                    f"{modelo}: {e}"
+                )
+
                 if tentativa < 3:
+
                     tempo_espera = tentativa * 10
-                    print(f"Aguardando {tempo_espera}s antes de tentar novamente...")
+
+                    print(
+                        f"Aguardando {tempo_espera}s..."
+                    )
+
                     time.sleep(tempo_espera)
+
             except Exception as e:
-                print(f"⚠️ Erro inesperado ao consultar {modelo}: {e}")
+
+                print(
+                    f"Erro inesperado no modelo {modelo}: {e}"
+                )
+
                 break
-                
-    print("❌ Todos os modelos e tentativas esgotaram com erro.")
+
+    print(
+        "\nTodos os modelos e tentativas esgotaram com erro."
+    )
+
     sys.exit(1)
 
+
 # =====================================================================
-# 4. DISPARO PARA O TELEGRAM
+# 10. ENVIO PARA TELEGRAM
 # =====================================================================
-def enviar_relatorio_telegram_completo(dados_fred: str, analise_ia: str, token: str, chat_id: str):
-    url = f"https://api.telegram.org/bot{token.strip()}/sendMessage"
-    
+
+def enviar_relatorio_telegram_completo(
+    dados_fred: str,
+    analise_ia: str,
+    token: str,
+    chat_id: str
+):
+
+    if not token:
+        raise ValueError(
+            "TELEGRAM_BOT_TOKEN não encontrado."
+        )
+
+    if not chat_id:
+        raise ValueError(
+            "TELEGRAM_CHAT_ID não encontrado."
+        )
+
+    url = (
+        f"https://api.telegram.org/bot"
+        f"{token.strip()}/sendMessage"
+    )
+
     relatorio_completo = (
         f"{dados_fred}\n\n"
-        f"====================================================\n"
-        f"        ANÁLISE MACROESTRATÉGICA & TÁTICA (IA)\n"
-        f"====================================================\n\n"
+        f"{'=' * 60}\n"
+        f"ANÁLISE MACROESTRATÉGICA & TÁTICA — IA\n"
+        f"{'=' * 60}\n\n"
         f"{analise_ia}"
     )
-    
-    MAX_CHAR = 3800
-    blocos = [relatorio_completo[i:i + MAX_CHAR] for i in range(0, len(relatorio_completo), MAX_CHAR)]
-    
-    print(f"\nEnviando relatório completo ({len(blocos)} bloco(s)) para o Telegram...")
-    
+
+    blocos = [
+        relatorio_completo[
+            i:i + TELEGRAM_MAX_CHAR
+        ]
+        for i in range(
+            0,
+            len(relatorio_completo),
+            TELEGRAM_MAX_CHAR
+        )
+    ]
+
+    print(
+        f"\nEnviando relatório completo "
+        f"({len(blocos)} bloco(s)) para o Telegram..."
+    )
+
     for idx, bloco in enumerate(blocos):
+
         payload = {
             "chat_id": str(chat_id).strip(),
             "text": bloco
         }
-        
-        response = requests.post(url, json=payload)
-        res_data = response.json()
-        
-        if response.status_code == 200 and res_data.get("ok"):
-            print(f"  [✓] Bloco {idx + 1}/{len(blocos)} enviado com sucesso!")
-        else:
-            print(f"❌ Erro ao enviar para o Telegram: {res_data.get('description')}")
+
+        try:
+
+            response = requests.post(
+                url,
+                json=payload,
+                timeout=30
+            )
+
+            res_data = response.json()
+
+            if response.status_code == 200 and res_data.get("ok"):
+
+                print(
+                    f"  [✓] Bloco "
+                    f"{idx + 1}/{len(blocos)} enviado."
+                )
+
+            else:
+
+                print(
+                    f"  [✗] Erro Telegram: "
+                    f"{res_data.get('description')}"
+                )
+
+                sys.exit(1)
+
+        except Exception as e:
+
+            print(
+                f"  [✗] Erro de conexão com Telegram: {e}"
+            )
+
             sys.exit(1)
 
+
 # =====================================================================
-# 5. EXECUÇÃO
+# 11. EXECUÇÃO PRINCIPAL
 # =====================================================================
+
 if __name__ == "__main__":
-    df_raw = fetch_macro_data(FRED_API_KEY)
-    df_processed = process_liquidity_and_metrics(df_raw)
-    relatorio_fred = generate_agent_prompt_payload(df_processed)
-    
-    analise_ia = analisar_macro_com_gemini(relatorio_fred)
-    
-    enviar_relatorio_telegram_completo(relatorio_fred, analise_ia, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)
+
+    print("\n" + "=" * 72)
+    print("     ANALISTA MACROESTRATÉGICO — FRED + GEMINI")
+    print("=" * 72)
+
+    try:
+
+        # -------------------------------------------------------------
+        # ETAPA 1 — FRED
+        # -------------------------------------------------------------
+
+        df_raw = fetch_macro_data(
+            FRED_API_KEY
+        )
+
+        print(
+            f"\nDados coletados: "
+            f"{len(df_raw.columns)} séries"
+        )
+
+        print(
+            f"Período: "
+            f"{df_raw.index.min().strftime('%Y-%m-%d')} "
+            f"até "
+            f"{df_raw.index.max().strftime('%Y-%m-%d')}"
+        )
+
+        # -------------------------------------------------------------
+        # ETAPA 2 — PROCESSAMENTO
+        # -------------------------------------------------------------
+
+        df_processed = process_macro_data(
+            df_raw
+        )
+
+        # -------------------------------------------------------------
+        # ETAPA 3 — PAYLOAD
+        # -------------------------------------------------------------
+
+        relatorio_fred = generate_agent_prompt_payload(
+            df_processed
+        )
+
+        # -------------------------------------------------------------
+        # ETAPA 4 — GEMINI
+        # -------------------------------------------------------------
+
+        analise_ia = analisar_macro_com_gemini(
+            relatorio_fred
+        )
+
+        # -------------------------------------------------------------
+        # ETAPA 5 — TELEGRAM
+        # -------------------------------------------------------------
+
+        enviar_relatorio_telegram_completo(
+            relatorio_fred,
+            analise_ia,
+            TELEGRAM_BOT_TOKEN,
+            TELEGRAM_CHAT_ID
+        )
+
+        print("\nProcesso concluído com sucesso.")
+
+    except KeyboardInterrupt:
+
+        print("\nExecução interrompida pelo usuário.")
+        sys.exit(0)
+
+    except Exception as e:
+
+        print(
+            f"\nERRO FATAL: {e}"
+        )
+
+        sys.exit(1)
